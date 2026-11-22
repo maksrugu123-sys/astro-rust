@@ -111,6 +111,7 @@ impl VoxelChunk {
 pub struct TerrainWorld {
     chunks: HashMap<ChunkCoord, VoxelChunk>,
     edited_cache: HashMap<ChunkCoord, Vec<VoxelKind>>,
+    edit_revision: u64,
     pub seed: u64,
     pub voxel_size: f32,
     pub base_radius: f32,
@@ -127,6 +128,7 @@ impl TerrainWorld {
         Self {
             chunks: HashMap::new(),
             edited_cache: HashMap::new(),
+            edit_revision: 0,
             seed,
             voxel_size: voxel_size.max(0.01),
             base_radius: base_radius.max(0.1),
@@ -135,6 +137,42 @@ impl TerrainWorld {
 
     pub fn loaded_chunk_count(&self) -> usize {
         self.chunks.len()
+    }
+
+    pub(crate) fn edit_revision(&self) -> u64 {
+        self.edit_revision
+    }
+
+    /// Copies only player-edited chunks, including chunks currently unloaded.
+    pub(crate) fn export_edited_chunks(&self) -> Vec<(ChunkCoord, Vec<VoxelKind>)> {
+        let mut edited = self.edited_cache.clone();
+        for (coord, chunk) in &self.chunks {
+            if chunk.edited {
+                edited.insert(*coord, chunk.blocks.clone());
+            }
+        }
+        edited.into_iter().collect()
+    }
+
+    /// Restores a validated save snapshot into the lazy-load edit cache.
+    pub(crate) fn restore_saved_world(
+        &mut self,
+        seed: u64,
+        voxel_size: f32,
+        base_radius: f32,
+        chunks: Vec<(ChunkCoord, Vec<VoxelKind>)>,
+    ) {
+        self.seed = seed;
+        self.voxel_size = voxel_size;
+        self.base_radius = base_radius;
+        self.chunks.clear();
+        self.edited_cache.clear();
+        for (coord, blocks) in chunks {
+            if blocks.len() == CHUNK_VOLUME {
+                self.edited_cache.insert(coord, blocks);
+            }
+        }
+        self.edit_revision = 1;
     }
 
     pub fn chunk(&self, coord: ChunkCoord) -> Option<&VoxelChunk> {
@@ -240,6 +278,7 @@ impl TerrainWorld {
             .is_some_and(|chunk| chunk.set(local, kind));
 
         if changed {
+            self.edit_revision = self.edit_revision.wrapping_add(1);
             for (axis, value) in [(0, local.x), (1, local.y), (2, local.z)] {
                 if value == 0 || value == CHUNK_SIZE - 1 {
                     let mut neighbor = coord;
