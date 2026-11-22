@@ -25,6 +25,7 @@ pub fn run_app() {
     .init_resource::<player::TouchControls>()
     .init_resource::<player::CameraOrbit>()
     .init_resource::<terrain::TerrainWorld>()
+    .init_resource::<terrain::TerrainGenerationQueue>()
     .insert_resource(save_system::SaveStore::discover())
     .add_systems(
         Startup,
