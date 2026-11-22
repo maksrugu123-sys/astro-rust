@@ -10,7 +10,7 @@ use bevy::prelude::*;
 
 use crate::{
     player::Inventory,
-    terrain::{ChunkCoord, SavedChunkData, TerrainWorld, VoxelKind},
+    terrain::{ChunkCoord, TerrainWorld, VoxelKind},
 };
 
 const SAVE_FILE: &str = "world.astrosave";
@@ -112,7 +112,7 @@ struct SavedWorld {
     seed: u64,
     voxel_size: f32,
     base_radius: f32,
-    chunks: Vec<(ChunkCoord, SavedChunkData)>,
+    chunks: Vec<(ChunkCoord, Vec<(u16, VoxelKind)>)>,
     inventory: [u16; 4],
 }
 
@@ -305,22 +305,20 @@ fn decode_save(bytes: &[u8]) -> Result<SavedWorld, String> {
 
     let mut cursor = 8;
     let version = take_u32(bytes, &mut cursor)?;
-    if !(1..=FORMAT_VERSION).contains(&version) {
-        return Err(format!("Unsupported save format version: {version}"));
+    if version != FORMAT_VERSION {
+        return Err(format!(
+            "Unsupported save format version: {version}; this build requires v{FORMAT_VERSION}"
+        ));
     }
     let seed = take_u64(bytes, &mut cursor)?;
     let voxel_size = f32::from_bits(take_u32(bytes, &mut cursor)?);
     let base_radius = f32::from_bits(take_u32(bytes, &mut cursor)?);
-    let inventory = if version >= 3 {
-        [
-            take_u16(bytes, &mut cursor)?,
-            take_u16(bytes, &mut cursor)?,
-            take_u16(bytes, &mut cursor)?,
-            take_u16(bytes, &mut cursor)?,
-        ]
-    } else {
-        [0; 4]
-    };
+    let inventory = [
+        take_u16(bytes, &mut cursor)?,
+        take_u16(bytes, &mut cursor)?,
+        take_u16(bytes, &mut cursor)?,
+        take_u16(bytes, &mut cursor)?,
+    ];
     let count = take_u32(bytes, &mut cursor)? as usize;
     if !voxel_size.is_finite()
         || voxel_size <= 0.0
@@ -331,16 +329,7 @@ fn decode_save(bytes: &[u8]) -> Result<SavedWorld, String> {
         return Err("Save metadata is outside supported bounds".into());
     }
 
-    let header_size = if version >= 3 { 40usize } else { 32usize };
-    if version < 4 {
-        let expected = header_size
-            .checked_add(count.checked_mul(12 + CHUNK_BLOCKS).ok_or("Save size overflow")?)
-            .and_then(|size| size.checked_add(8))
-            .ok_or("Save size overflow")?;
-        if bytes.len() != expected || cursor > payload_end {
-            return Err("Legacy save length does not match its chunk index".into());
-        }
-    } else if cursor > payload_end {
+    if cursor > payload_end {
         return Err("Save header is truncated".into());
     }
 
@@ -359,34 +348,22 @@ fn decode_save(bytes: &[u8]) -> Result<SavedWorld, String> {
             return Err("Save contains a duplicate chunk coordinate".into());
         }
 
-        let data = if version < 4 {
-            let end = cursor.checked_add(CHUNK_BLOCKS).ok_or("Save size overflow")?;
-            let raw = bytes.get(cursor..end).ok_or("Save chunk is truncated")?;
-            let mut blocks = Vec::with_capacity(CHUNK_BLOCKS);
-            for value in raw {
-                blocks.push(decode_voxel(*value)?);
+        let edit_count = take_u16(bytes, &mut cursor)? as usize;
+        if edit_count == 0 || edit_count > CHUNK_BLOCKS {
+            return Err("Save chunk edit count is outside supported bounds".into());
+        }
+        let mut edits = Vec::with_capacity(edit_count);
+        let mut indices = HashSet::with_capacity(edit_count);
+        for _ in 0..edit_count {
+            let index = take_u16(bytes, &mut cursor)?;
+            if index as usize >= CHUNK_BLOCKS || !indices.insert(index) {
+                return Err("Save chunk contains an invalid or duplicate voxel index".into());
             }
-            cursor = end;
-            SavedChunkData::LegacyFull(blocks)
-        } else {
-            let edit_count = take_u16(bytes, &mut cursor)? as usize;
-            if edit_count == 0 || edit_count > CHUNK_BLOCKS {
-                return Err("Save chunk edit count is outside supported bounds".into());
-            }
-            let mut edits = Vec::with_capacity(edit_count);
-            let mut indices = HashSet::with_capacity(edit_count);
-            for _ in 0..edit_count {
-                let index = take_u16(bytes, &mut cursor)?;
-                if index as usize >= CHUNK_BLOCKS || !indices.insert(index) {
-                    return Err("Save chunk contains an invalid or duplicate voxel index".into());
-                }
-                let kind = decode_voxel(*bytes.get(cursor).ok_or("Save chunk is truncated")?)?;
-                cursor += 1;
-                edits.push((index, kind));
-            }
-            SavedChunkData::Sparse(edits)
-        };
-        chunks.push((coord, data));
+            let kind = decode_voxel(*bytes.get(cursor).ok_or("Save chunk is truncated")?)?;
+            cursor += 1;
+            edits.push((index, kind));
+        }
+        chunks.push((coord, edits));
     }
     if cursor != payload_end {
         return Err("Save contains unexpected trailing data".into());
@@ -478,10 +455,7 @@ mod tests {
         assert_eq!(decoded.voxel_size, 0.25);
         assert_eq!(decoded.chunks.len(), 1);
         assert_eq!(decoded.inventory, [4, 5, 6, 7]);
-        match &decoded.chunks[0].1 {
-            SavedChunkData::Sparse(edits) => assert_eq!(edits, &vec![(4 + 16 * (4 + 16 * 4), changed)]),
-            _ => panic!("v4 must decode to sparse chunk edits"),
-        }
+        assert_eq!(decoded.chunks[0].1, vec![(4 + 16 * (4 + 16 * 4), changed)]);
     }
 
     #[test]
@@ -498,59 +472,24 @@ mod tests {
     }
 
     #[test]
-    fn version_one_save_loads_with_empty_inventory() {
-        let mut bytes = Vec::new();
-        bytes.extend_from_slice(MAGIC);
-        push_u32(&mut bytes, 1);
-        push_u64(&mut bytes, 77);
-        push_u32(&mut bytes, 0.25_f32.to_bits());
-        push_u32(&mut bytes, 3.0_f32.to_bits());
-        push_u32(&mut bytes, 0);
-        let checksum = checksum64(&bytes);
-        push_u64(&mut bytes, checksum);
-        let decoded = decode_save(&bytes).unwrap();
-        assert_eq!(decoded.seed, 77);
-        assert_eq!(decoded.inventory, [0; 4]);
-        assert!(decoded.chunks.is_empty());
-    }
-
-    #[test]
-    fn version_two_save_migrates_to_empty_inventory() {
-        let mut bytes = Vec::new();
-        bytes.extend_from_slice(MAGIC);
-        push_u32(&mut bytes, 2);
-        push_u64(&mut bytes, 88);
-        push_u32(&mut bytes, 0.25_f32.to_bits());
-        push_u32(&mut bytes, 3.0_f32.to_bits());
-        push_u32(&mut bytes, 0);
-        let checksum = checksum64(&bytes);
-        push_u64(&mut bytes, checksum);
-        let decoded = decode_save(&bytes).unwrap();
-        assert_eq!(decoded.seed, 88);
-        assert_eq!(decoded.inventory, [0; 4]);
-        assert!(decoded.chunks.is_empty());
-    }
-
-    #[test]
-    fn version_three_full_chunk_is_migrated_to_legacy_variant() {
-        let mut bytes = Vec::new();
-        bytes.extend_from_slice(MAGIC);
-        push_u32(&mut bytes, 3);
-        push_u64(&mut bytes, 88);
-        push_u32(&mut bytes, 0.25_f32.to_bits());
-        push_u32(&mut bytes, 3.0_f32.to_bits());
-        for value in [0_u16; 4] {
-            push_u16(&mut bytes, value);
+    fn old_save_versions_are_rejected_explicitly() {
+        for version in 1..FORMAT_VERSION {
+            let mut bytes = Vec::new();
+            bytes.extend_from_slice(MAGIC);
+            push_u32(&mut bytes, version);
+            push_u64(&mut bytes, 77);
+            push_u32(&mut bytes, 0.25_f32.to_bits());
+            push_u32(&mut bytes, 3.0_f32.to_bits());
+            push_u16(&mut bytes, 0);
+            push_u16(&mut bytes, 0);
+            push_u16(&mut bytes, 0);
+            push_u16(&mut bytes, 0);
+            push_u32(&mut bytes, 0);
+            let checksum = checksum64(&bytes);
+            push_u64(&mut bytes, checksum);
+            let error = decode_save(&bytes).unwrap_err();
+            assert!(error.contains("requires v4"));
         }
-        push_u32(&mut bytes, 1);
-        push_i32(&mut bytes, 0);
-        push_i32(&mut bytes, 0);
-        push_i32(&mut bytes, 0);
-        bytes.resize(bytes.len() + CHUNK_BLOCKS, VoxelKind::Air as u8);
-        let checksum = checksum64(&bytes);
-        push_u64(&mut bytes, checksum);
-        let decoded = decode_save(&bytes).unwrap();
-        assert!(matches!(decoded.chunks[0].1, SavedChunkData::LegacyFull(_)));
     }
 
     #[test]
