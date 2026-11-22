@@ -290,10 +290,7 @@ impl VoxelChunk {
     }
 }
 
-pub(crate) enum SavedChunkData {
-    LegacyFull(Vec<VoxelKind>),
-    Sparse(Vec<(u16, VoxelKind)>),
-}
+pub(crate) type SavedChunkData = Vec<(u16, VoxelKind)>;
 
 #[derive(Resource, Debug)]
 pub struct TerrainWorld {
@@ -367,16 +364,7 @@ impl TerrainWorld {
             if !coord.is_representable() {
                 continue;
             }
-            let edits = match data {
-                SavedChunkData::Sparse(edits) => edits,
-                SavedChunkData::LegacyFull(blocks) if blocks.len() == CHUNK_VOLUME => {
-                    let baseline = generate_chunk(coord, seed, voxel_size, base_radius);
-                    blocks.into_iter().enumerate().filter_map(|(index, kind)| {
-                        (baseline.blocks[index] != kind).then_some((index as u16, kind))
-                    }).collect()
-                }
-                SavedChunkData::LegacyFull(_) => continue,
-            };
+            let edits = data;
             if !edits.is_empty() {
                 self.edited_cache.insert(coord, edits);
             }
