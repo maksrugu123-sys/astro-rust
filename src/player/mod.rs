@@ -42,6 +42,7 @@ pub struct TouchControls {
     movement: Vec2,
     look_delta: Vec2,
     jump_pressed: bool,
+    jump_was_pressed: bool,
 }
 
 /// Camera orbit is expressed relative to the player's local surface frame.
@@ -224,7 +225,7 @@ pub fn update_orbit_state(
 pub fn move_player_on_planet(
     time: Res<Time>,
     keyboard: Res<ButtonInput<KeyCode>>,
-    controls: Res<TouchControls>,
+    mut controls: ResMut<TouchControls>,
     orbit: Res<CameraOrbit>,
     mut player_query: Query<
         (&mut Transform, &mut PlayerHeading, &mut PlayerMotion),
@@ -272,8 +273,9 @@ pub fn move_player_on_planet(
         motion.velocity *= damping;
     }
 
-    let jump_requested =
-        controls.jump_pressed || keyboard.just_pressed(KeyCode::Space);
+    let touch_jump_started = controls.jump_pressed && !controls.jump_was_pressed;
+    controls.jump_was_pressed = controls.jump_pressed;
+    let jump_requested = touch_jump_started || keyboard.just_pressed(KeyCode::Space);
     if jump_requested && motion.grounded {
         motion.velocity += frame.up * JUMP_SPEED;
         motion.grounded = false;
