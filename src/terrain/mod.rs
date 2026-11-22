@@ -163,7 +163,7 @@ impl Default for TerrainGenerationQueue {
 
 impl TerrainGenerationQueue {
     fn request(&mut self, coord: ChunkCoord, seed: u64, voxel_size: f32, base_radius: f32) {
-        if !self.pending.insert(coord) {
+        if !coord.is_representable() || !self.pending.insert(coord) {
             return;
         }
         let sender = self.sender.clone();
@@ -277,6 +277,13 @@ impl TerrainWorld {
 
     pub(crate) fn edit_revision(&self) -> u64 {
         self.edit_revision
+    }
+
+    pub(crate) fn edited_chunk_count(&self) -> usize {
+        let cached = self.edited_cache.len();
+        cached + self.chunks.iter().filter(|(coord, chunk)| {
+            chunk.edited && !self.edited_cache.contains_key(coord)
+        }).count()
     }
 
     /// Copies only player-edited chunks, including chunks currently unloaded.
@@ -631,11 +638,14 @@ pub fn stream_terrain_chunks(
     for z in -STREAM_RADIUS..=STREAM_RADIUS {
         for y in -STREAM_RADIUS..=STREAM_RADIUS {
             for x in -STREAM_RADIUS..=STREAM_RADIUS {
-                desired.insert(ChunkCoord {
+                let coord = ChunkCoord {
                     x: center.x.saturating_add(x),
                     y: center.y.saturating_add(y),
                     z: center.z.saturating_add(z),
-                });
+                };
+                if coord.is_representable() {
+                    desired.insert(coord);
+                }
             }
         }
     }
