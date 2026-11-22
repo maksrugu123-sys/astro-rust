@@ -54,7 +54,7 @@ impl ChunkCoord {
         }
     }
 
-    fn is_representable(self) -> bool {
+    pub(crate) fn is_representable(self) -> bool {
         let min = i32::MIN.div_euclid(CHUNK_SIZE);
         let max = i32::MAX.div_euclid(CHUNK_SIZE);
         (min..=max).contains(&self.x)
