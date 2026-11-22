@@ -23,7 +23,7 @@ const CHUNK_FORMAT_VERSION: u32 = 1;
 const CHUNK_BLOCKS: usize = 16 * 16 * 16;
 const MAX_SAVED_CHUNKS: usize = 8_192;
 const MAX_CHUNK_FILE_BYTES: u64 = (8 + 4 + 12 + 2 + CHUNK_BLOCKS * 3 + 8) as u64;
-const MAX_MANIFEST_BYTES: u64 = (8 + 4 + 8 + 4 + 4 + 8 + 4 + MAX_SAVED_CHUNKS * 12 + 8) as u64;
+const MAX_MANIFEST_BYTES: u64 = (8 + 4 + 8 + 4 + 4 + 8 + 4 + MAX_SAVED_CHUNKS * 20 + 8) as u64;
 const AUTOSAVE_SECONDS: f32 = 15.0;
 
 #[derive(Resource)]
@@ -316,7 +316,7 @@ fn encode_manifest(
     }
     let mut ordered: Vec<_> = chunks.iter().collect();
     ordered.sort_by_key(|(coord, _)| (coord.x, coord.y, coord.z));
-    let mut bytes = Vec::with_capacity(40 + ordered.len() * 12 + 8);
+    let mut bytes = Vec::with_capacity(40 + ordered.len() * 20 + 8);
     bytes.extend_from_slice(MAGIC);
     push_u32(&mut bytes, FORMAT_VERSION);
     push_u64(&mut bytes, terrain.seed);
@@ -430,7 +430,7 @@ fn decode_manifest(bytes: &[u8]) -> Result<ManifestData, String> {
 }
 
 fn decode_chunk(bytes: &[u8], expected_coord: ChunkCoord, expected_checksum: u64) -> Result<Vec<(u16, VoxelKind)>, String> {
-    if bytes.len() < 34 || bytes.len() as u64 > MAX_CHUNK_FILE_BYTES
+    if bytes.len() < 37 || bytes.len() as u64 > MAX_CHUNK_FILE_BYTES
         || &bytes[..8] != CHUNK_MAGIC
     {
         return Err("Chunk file header is missing or invalid".into());
@@ -575,6 +575,7 @@ mod tests {
 
         let chunk_file = encode_chunk(coord, &edits).unwrap();
         let checksum = read_u64(&chunk_file, chunk_file.len() - 8).unwrap();
+        assert_eq!(decoded_manifest.chunk_records[0].1, checksum);
         assert_eq!(decode_chunk(&chunk_file, coord, checksum).unwrap(), edits);
     }
 
