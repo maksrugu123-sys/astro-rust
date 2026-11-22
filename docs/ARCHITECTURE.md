@@ -4,7 +4,7 @@
 
 The initial world model uses a spherical planet centered at the origin. Positions are measured in meters. The outward surface normal at a position is the normalized center-to-position vector; gravity points in the opposite direction.
 
-The first math module deliberately contains only small pure functions. It must remain easy to test without starting the renderer.
+Pure planet and player math stays independent of rendering where practical. Local tangent frames provide an orthonormal basis (up, forward, right) at each surface position. Movement is projected onto this tangent plane, then the player is re-projected to the configured surface radius.
 
 ## Planned subsystem boundaries
 
@@ -27,4 +27,4 @@ The renderer's High profile is a quality target, not a universal default. Runtim
 
 ## Current implementation
 
-The repository currently contains a Bevy 0.20 app entry point, a simple icosphere scene, and tested spherical math helpers. Character movement, voxel terrain, streaming, saves, and Android packaging are planned but not implemented.
+The app now has a prototype spherical planet, a capsule player, local tangent-frame math, radial surface alignment, and temporary WASD movement with a follow camera. This is kinematic surface movement only: collision, jumping, physical acceleration, Android touch controls, terrain, streaming, saves, and Android packaging are not implemented yet.
