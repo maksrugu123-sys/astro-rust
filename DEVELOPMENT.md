@@ -13,8 +13,10 @@
 - [x] Add local tangent-frame math and keyboard movement for desktop iteration.
 - [x] Add a virtual movement joystick and two-finger-capable touch camera drag.
 - [x] Add camera orbit relative to the local spherical surface frame.
-- [ ] Add physical gravity, jumping, and collision handling.
-- [ ] Add a dedicated Android landscape/portrait layout review.
+- [x] Add radial gravity, jump impulse, and spherical-boundary contact response.
+- [x] Add a separate mobile jump touch target.
+- [ ] Verify physical movement and touch layout on desktop and Android.
+- [ ] Add terrain-aware collision when voxel terrain is introduced.
 - [ ] Basic terrain material and horizon/sky presentation.
 - [ ] Device-aware graphics settings (High / Medium / Low).
 
@@ -38,4 +40,4 @@
 - [ ] Profiling on real Android hardware before raising visual defaults.
 
 ## Current validation status
-No builds, tests, APK packaging, or device profiling have been run. Touch input, UI layout, and camera behavior are source-implemented but remain unverified on an Android device.
+No builds, tests, APK packaging, or device profiling have been run. Physics helpers include unit tests, but those tests have not been executed. The collision boundary is the prototype's ideal spherical surface; it is not yet terrain-mesh or voxel collision. Touch input, UI layout, and physical movement remain unverified on an Android device.
