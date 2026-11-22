@@ -13,7 +13,7 @@ use crate::terrain::{ChunkCoord, TerrainWorld, VoxelKind};
 const SAVE_FILE: &str = "world.astrosave";
 const TEMP_FILE: &str = "world.astrosave.tmp";
 const MAGIC: &[u8; 8] = b"ASTRSAV1";
-const FORMAT_VERSION: u32 = 1;
+const FORMAT_VERSION: u32 = 2;
 const CHUNK_BLOCKS: usize = 16 * 16 * 16;
 const MAX_SAVED_CHUNKS: usize = 8_192;
 const AUTOSAVE_SECONDS: f32 = 15.0;
@@ -226,7 +226,7 @@ fn decode_save(bytes: &[u8]) -> Result<SavedWorld, String> {
 
     let mut cursor = 8;
     let version = take_u32(bytes, &mut cursor)?;
-    if version != FORMAT_VERSION {
+    if version != 1 && version != FORMAT_VERSION {
         return Err(format!("Unsupported save format version: {version}"));
     }
     let seed = take_u64(bytes, &mut cursor)?;
@@ -268,6 +268,8 @@ fn decode_save(bytes: &[u8]) -> Result<SavedWorld, String> {
                 0 => VoxelKind::Air,
                 1 => VoxelKind::Regolith,
                 2 => VoxelKind::Rock,
+                3 => VoxelKind::CopperOre,
+                4 => VoxelKind::IronOre,
                 _ => return Err("Save contains an unknown voxel kind".into()),
             };
             blocks.push(kind);
@@ -319,7 +321,7 @@ fn take_u64(bytes: &[u8], cursor: &mut usize) -> Result<u64, String> {
     Ok(u64::from_le_bytes(raw))
 }
 fn take_i32(bytes: &[u8], cursor: &mut usize) -> Result<i32, String> {
-    let end = cursor.checked_add(4).ok_or("Save offset overflow")?;
+    let end = (*cursor).checked_add(4).ok_or("Save offset overflow")?;
     let raw: [u8; 4] = bytes.get(*cursor..end).ok_or("Save is truncated")?
         .try_into().map_err(|_| "Invalid i32 field")?;
     *cursor = end;
