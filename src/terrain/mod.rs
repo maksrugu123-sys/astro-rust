@@ -55,7 +55,11 @@ impl ChunkCoord {
     }
 
     fn origin(self) -> IVec3 {
-        IVec3::new(self.x, self.y, self.z) * CHUNK_SIZE
+        IVec3::new(
+            self.x.saturating_mul(CHUNK_SIZE),
+            self.y.saturating_mul(CHUNK_SIZE),
+            self.z.saturating_mul(CHUNK_SIZE),
+        )
     }
 }
 
@@ -315,14 +319,7 @@ impl TerrainWorld {
         if chunk.edited {
             self.edited_cache.insert(coord, chunk.blocks);
         }
-        for neighbor in [
-            ChunkCoord { x: coord.x - 1, y: coord.y, z: coord.z },
-            ChunkCoord { x: coord.x + 1, y: coord.y, z: coord.z },
-            ChunkCoord { x: coord.x, y: coord.y - 1, z: coord.z },
-            ChunkCoord { x: coord.x, y: coord.y + 1, z: coord.z },
-            ChunkCoord { x: coord.x, y: coord.y, z: coord.z - 1 },
-            ChunkCoord { x: coord.x, y: coord.y, z: coord.z + 1 },
-        ] {
+        for neighbor in chunk_neighbors(coord) {
             if let Some(chunk) = self.chunks.get_mut(&neighbor) {
                 chunk.mesh_dirty = true;
             }
@@ -378,9 +375,9 @@ impl TerrainWorld {
                     let mut neighbor = coord;
                     let delta = if value == 0 { -1 } else { 1 };
                     match axis {
-                        0 => neighbor.x += delta,
-                        1 => neighbor.y += delta,
-                        _ => neighbor.z += delta,
+                        0 => neighbor.x = neighbor.x.saturating_add(delta),
+                        1 => neighbor.y = neighbor.y.saturating_add(delta),
+                        _ => neighbor.z = neighbor.z.saturating_add(delta),
                     }
                     if let Some(chunk) = self.chunks.get_mut(&neighbor) {
                         chunk.mesh_dirty = true;
@@ -472,7 +469,7 @@ impl TerrainWorld {
         for axis in 0..3 {
             if dir[axis] > 0.0 {
                 step[axis] = 1;
-                let boundary = (cell[axis] + 1) as f32 * size;
+                let boundary = cell[axis].saturating_add(1) as f32 * size;
                 t_max[axis] = (boundary - origin_axis[axis]) / dir[axis];
                 t_delta[axis] = size / dir[axis];
             } else if dir[axis] < 0.0 {
@@ -516,12 +513,12 @@ impl TerrainWorld {
             } else {
                 2
             };
-            distance = t_max[axis];
+            let distance = t_max[axis];
             if !distance.is_finite() || distance > max_distance {
                 return None;
             }
 
-            cell[axis] += step[axis];
+            cell[axis] = cell[axis].saturating_add(step[axis]);
             entry_normal = IVec3::ZERO;
             match axis {
                 0 => entry_normal.x = -step[axis],
@@ -891,6 +888,13 @@ mod tests {
         mask[1] = Some(VoxelKind::Rock);
         let rectangles = greedy_face_rectangles(&mut mask);
         assert_eq!(rectangles.len(), 2);
+    }
+
+    #[test]
+    fn chunk_neighbors_do_not_overflow_at_coordinate_limits() {
+        let neighbors = chunk_neighbors(ChunkCoord { x: i32::MAX, y: i32::MIN, z: 0 });
+        assert!(neighbors.iter().all(|coord| coord.x == i32::MAX || coord.x == i32::MAX - 1));
+        assert!(neighbors.iter().all(|coord| coord.y == i32::MIN || coord.y == i32::MIN + 1));
     }
 
     #[test]
