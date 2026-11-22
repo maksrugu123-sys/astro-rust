@@ -82,3 +82,6 @@ For each of six face directions and each chunk slice, the mesher creates a 16×1
 ## Resources and inventory prototype
 
 Underground rock generation includes deterministic copper and iron vein cells. Vein placement is derived from the world seed and integer voxel coordinates, so chunks can be generated independently without seams or runtime random-state dependencies. Mining collects the actual removed voxel material into a bounded prototype inventory (99 per material), and the HUD reports regolith, rock, copper, and iron counts. The save format advances to version 2 for the expanded voxel-kind IDs while continuing to decode version 1 terrain saves.
+
+
+Inventory is included in save format v3 alongside terrain edits. Version 1 and 2 files remain readable and initialize inventory to zero; version 3 stores four bounded material counters. On load, counts are clamped to the current per-material stack cap.
