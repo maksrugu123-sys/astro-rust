@@ -4,12 +4,14 @@ use bevy::{input::mouse::AccumulatedMouseMotion, prelude::*};
 
 pub mod math;
 
-use crate::planet::math::surface_normal;
+use crate::{
+    planet::math::surface_normal,
+    terrain::{TerrainWorld, VoxelKind},
+};
 use math::{radial_gravity, resolve_spherical_contact, tangent_frame};
 
 const PLANET_RADIUS: f32 = 3.0;
 const PLAYER_SURFACE_OFFSET: f32 = 0.62;
-const SURFACE_RADIUS: f32 = PLANET_RADIUS + PLAYER_SURFACE_OFFSET;
 const MOVE_ACCELERATION: f32 = 18.0;
 const MAX_GROUND_SPEED: f32 = 3.0;
 const MAX_AIR_SPEED: f32 = 3.4;
@@ -43,6 +45,10 @@ pub struct TouchControls {
     look_delta: Vec2,
     jump_pressed: bool,
     jump_was_pressed: bool,
+    mine_pressed: bool,
+    mine_was_pressed: bool,
+    place_pressed: bool,
+    place_was_pressed: bool,
 }
 
 /// Camera orbit is expressed relative to the player's local surface frame.
@@ -63,10 +69,12 @@ impl Default for CameraOrbit {
 
 pub fn spawn_player(
     mut commands: Commands,
+    terrain: Res<TerrainWorld>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let start_position = Vec3::Y * SURFACE_RADIUS;
+    let ground_radius = terrain.surface_radius(Vec3::Y).unwrap_or(PLANET_RADIUS);
+    let start_position = Vec3::Y * (ground_radius + PLAYER_SURFACE_OFFSET);
 
     commands.spawn((
         Mesh3d(meshes.add(Capsule3d::new(0.22, 0.8))),
@@ -135,6 +143,52 @@ pub fn spawn_touch_hud(mut commands: Commands) {
         Node {
             position_type: PositionType::Absolute,
             right: Val::Px(28.0),
+            top: Val::Px(28.0),
+            width: Val::Px(112.0),
+            height: Val::Px(64.0),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            border: UiRect::all(Val::Px(2.0)),
+            border_radius: BorderRadius::MAX,
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.20, 0.58, 0.34, 0.78)),
+        BorderColor::all(Color::srgba(0.72, 1.0, 0.80, 0.9)),
+        children![(
+            Text::new("MINE"),
+            TextFont { font_size: 17.0, ..default() },
+            TextColor(Color::WHITE),
+        )],
+        Name::new("Mine Button"),
+    ));
+
+    commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            right: Val::Px(28.0),
+            top: Val::Px(108.0),
+            width: Val::Px(112.0),
+            height: Val::Px(64.0),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            border: UiRect::all(Val::Px(2.0)),
+            border_radius: BorderRadius::MAX,
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.28, 0.42, 0.72, 0.78)),
+        BorderColor::all(Color::srgba(0.72, 0.84, 1.0, 0.9)),
+        children![(
+            Text::new("PLACE"),
+            TextFont { font_size: 17.0, ..default() },
+            TextColor(Color::WHITE),
+        )],
+        Name::new("Place Button"),
+    ));
+
+    commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            right: Val::Px(28.0),
             bottom: Val::Px(32.0),
             width: Val::Px(112.0),
             height: Val::Px(76.0),
@@ -169,6 +223,8 @@ pub fn read_touch_controls(
     controls.movement = Vec2::ZERO;
     controls.look_delta = Vec2::ZERO;
     controls.jump_pressed = false;
+    controls.mine_pressed = false;
+    controls.place_pressed = false;
 
     let Ok(window) = windows.single() else {
         return;
@@ -182,9 +238,15 @@ pub fn read_touch_controls(
         let start = touch.start_position();
         let position = touch.position();
         let jump_zone = start.x >= size.x - 160.0 && start.y >= size.y - 130.0;
+        let mine_zone = start.x >= size.x - 160.0 && start.y <= 100.0;
+        let place_zone = start.x >= size.x - 160.0 && (100.0..=190.0).contains(&start.y);
 
         if jump_zone {
             controls.jump_pressed = true;
+        } else if mine_zone {
+            controls.mine_pressed = true;
+        } else if place_zone {
+            controls.place_pressed = true;
         } else if start.x <= 210.0 && start.y >= size.y - 210.0 && !joystick_active {
             let displacement = Vec2::new(
                 position.x - joystick_center.x,
@@ -227,6 +289,7 @@ pub fn move_player_on_planet(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut controls: ResMut<TouchControls>,
     orbit: Res<CameraOrbit>,
+    terrain: Res<TerrainWorld>,
     mut player_query: Query<
         (&mut Transform, &mut PlayerHeading, &mut PlayerMotion),
         With<PlanetPlayer>,
@@ -297,14 +360,19 @@ pub fn move_player_on_planet(
 
     player_transform.translation += motion.velocity * dt;
 
-    let (position, velocity, grounded) = resolve_spherical_contact(
-        player_transform.translation,
-        motion.velocity,
-        SURFACE_RADIUS,
-    );
-    player_transform.translation = position;
-    motion.velocity = velocity;
-    motion.grounded = grounded;
+    if let Some(surface_radius) = terrain.surface_radius(player_transform.translation) {
+        let (position, velocity, grounded) = resolve_spherical_contact(
+            player_transform.translation,
+            motion.velocity,
+            surface_radius + PLAYER_SURFACE_OFFSET,
+        );
+        player_transform.translation = position;
+        motion.velocity = velocity;
+        motion.grounded = grounded;
+    } else {
+        // Unknown terrain is not treated as an invisible solid sphere.
+        motion.grounded = false;
+    }
 
     if let Some(up) = surface_normal(player_transform.translation) {
         if let Some(updated_frame) = tangent_frame(player_transform.translation, heading.0) {
@@ -342,4 +410,46 @@ pub fn update_follow_camera(
 
     *camera_transform = Transform::from_translation(camera_position)
         .looking_at(player_transform.translation + frame.up * 0.55, frame.up);
+}
+
+/// Executes edge-triggered mining and block placement from touch or keyboard input.
+/// The ray starts just in front of the player to avoid selecting the camera/player.
+pub fn apply_terrain_actions(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut controls: ResMut<TouchControls>,
+    camera_query: Query<&Transform, (With<Camera3d>, Without<PlanetPlayer>)>,
+    player_query: Query<&Transform, With<PlanetPlayer>>,
+    mut terrain: ResMut<TerrainWorld>,
+) {
+    let mine = (controls.mine_pressed && !controls.mine_was_pressed)
+        || keyboard.just_pressed(KeyCode::KeyE);
+    let place = (controls.place_pressed && !controls.place_was_pressed)
+        || keyboard.just_pressed(KeyCode::KeyQ);
+    controls.mine_was_pressed = controls.mine_pressed;
+    controls.place_was_pressed = controls.place_pressed;
+
+    if !mine && !place {
+        return;
+    }
+
+    let (Ok(camera), Ok(player)) = (camera_query.single(), player_query.single()) else {
+        return;
+    };
+    let direction = -camera.forward().as_vec3();
+    let origin = player.translation + direction * 0.18;
+    let Some((voxel, face_normal)) = terrain.raycast_solid(origin, direction, 7.0) else {
+        return;
+    };
+
+    if mine {
+        terrain.set_block(voxel, VoxelKind::Air);
+    } else if place {
+        let target = voxel + face_normal;
+        let target_center = (target.as_vec3() + Vec3::splat(0.5)) * terrain.voxel_size;
+        if target_center.distance(player.translation) >= 0.95
+            && !terrain.get_block(target).is_some_and(VoxelKind::is_solid)
+        {
+            terrain.set_block(target, VoxelKind::Regolith);
+        }
+    }
 }
