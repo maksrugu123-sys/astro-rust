@@ -48,6 +48,16 @@ pub struct Inventory {
 }
 
 impl Inventory {
+    fn can_collect(&self, kind: VoxelKind) -> bool {
+        match kind {
+            VoxelKind::Regolith => self.regolith < 99,
+            VoxelKind::Rock => self.rock < 99,
+            VoxelKind::CopperOre => self.copper < 99,
+            VoxelKind::IronOre => self.iron < 99,
+            VoxelKind::Air => false,
+        }
+    }
+
     fn collect(&mut self, kind: VoxelKind) {
         let slot = match kind {
             VoxelKind::Regolith => &mut self.regolith,
@@ -59,6 +69,15 @@ impl Inventory {
         *slot = (*slot).saturating_add(1).min(99);
     }
 }
+
+    #[test]
+    fn inventory_stops_mining_when_a_stack_is_full() {
+        let mut inventory = Inventory { regolith: 99, ..default() };
+        assert!(!inventory.can_collect(VoxelKind::Regolith));
+        assert!(inventory.can_collect(VoxelKind::CopperOre));
+        inventory.collect(VoxelKind::CopperOre);
+        assert_eq!(inventory.copper, 1);
+    }
 
 #[derive(Component)]
 struct InventoryHud;
@@ -500,7 +519,10 @@ pub fn apply_terrain_actions(
 
     if mine {
         if let Some(kind) = terrain.get_block(voxel) {
-            if kind.is_solid() && terrain.set_block(voxel, VoxelKind::Air) {
+            if kind.is_solid()
+                && inventory.can_collect(kind)
+                && terrain.set_block(voxel, VoxelKind::Air)
+            {
                 inventory.collect(kind);
             }
         }
