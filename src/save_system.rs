@@ -8,12 +8,15 @@ use std::{
 
 use bevy::prelude::*;
 
-use crate::terrain::{ChunkCoord, TerrainWorld, VoxelKind};
+use crate::{
+    player::Inventory,
+    terrain::{ChunkCoord, TerrainWorld, VoxelKind},
+};
 
 const SAVE_FILE: &str = "world.astrosave";
 const TEMP_FILE: &str = "world.astrosave.tmp";
 const MAGIC: &[u8; 8] = b"ASTRSAV1";
-const FORMAT_VERSION: u32 = 2;
+const FORMAT_VERSION: u32 = 3;
 const CHUNK_BLOCKS: usize = 16 * 16 * 16;
 const MAX_SAVED_CHUNKS: usize = 8_192;
 const AUTOSAVE_SECONDS: f32 = 15.0;
@@ -62,7 +65,7 @@ impl SaveStore {
             return Ok(None);
         }
         let metadata = fs::metadata(&path).map_err(|e| format!("Cannot inspect save: {e}"))?;
-        let max_size = 32 + MAX_SAVED_CHUNKS * (12 + CHUNK_BLOCKS) + 8;
+        let max_size = 40 + MAX_SAVED_CHUNKS * (12 + CHUNK_BLOCKS) + 8;
         if metadata.len() as usize > max_size {
             return Err("Save file exceeds the supported size limit".into());
         }
@@ -73,7 +76,7 @@ impl SaveStore {
         decode_save(&bytes).map(Some)
     }
 
-    fn save(&self, terrain: &TerrainWorld) -> Result<(), String> {
+    fn save(&self, terrain: &TerrainWorld, inventory: &Inventory) -> Result<(), String> {
         let Some(directory) = self.directory.as_ref() else {
             return Err("No writable application data directory is available".into());
         };
@@ -86,7 +89,7 @@ impl SaveStore {
             ));
         }
 
-        let bytes = encode_save(terrain, &chunks)?;
+        let bytes = encode_save(terrain, &chunks, inventory)?;
         fs::create_dir_all(directory)
             .map_err(|e| format!("Cannot create save directory: {e}"))?;
         let temp_path = directory.join(TEMP_FILE);
@@ -107,9 +110,14 @@ struct SavedWorld {
     voxel_size: f32,
     base_radius: f32,
     chunks: Vec<(ChunkCoord, Vec<VoxelKind>)>,
+    inventory: [u16; 4],
 }
 
-pub fn load_saved_world(mut terrain: ResMut<TerrainWorld>, store: Res<SaveStore>) {
+pub fn load_saved_world(
+    mut terrain: ResMut<TerrainWorld>,
+    mut inventory: ResMut<Inventory>,
+    store: Res<SaveStore>,
+) {
     match store.load() {
         Ok(Some(save)) => {
             terrain.restore_saved_world(
@@ -118,6 +126,10 @@ pub fn load_saved_world(mut terrain: ResMut<TerrainWorld>, store: Res<SaveStore>
                 save.base_radius,
                 save.chunks,
             );
+            inventory.regolith = save.inventory[0].min(99);
+            inventory.rock = save.inventory[1].min(99);
+            inventory.copper = save.inventory[2].min(99);
+            inventory.iron = save.inventory[3].min(99);
             info!("Loaded ASTRO-RUST world save");
         }
         Ok(None) => info!("No ASTRO-RUST save found; generating a new world"),
@@ -128,6 +140,7 @@ pub fn load_saved_world(mut terrain: ResMut<TerrainWorld>, store: Res<SaveStore>
 pub fn autosave_world(
     time: Res<Time>,
     terrain: Res<TerrainWorld>,
+    inventory: Res<Inventory>,
     mut store: ResMut<SaveStore>,
 ) {
     store.timer.tick(time.delta());
@@ -135,7 +148,7 @@ pub fn autosave_world(
     if !store.timer.just_finished() || store.last_saved_revision == Some(revision) {
         return;
     }
-    match store.save(&terrain) {
+    match store.save(&terrain, &inventory) {
         Ok(()) => {
             store.last_saved_revision = Some(revision);
             info!("ASTRO-RUST world autosaved");
@@ -148,6 +161,7 @@ pub fn autosave_world(
 pub fn save_world_on_suspend(
     mut lifecycle: MessageReader<bevy::window::AppLifecycle>,
     terrain: Res<TerrainWorld>,
+    inventory: Res<Inventory>,
     mut store: ResMut<SaveStore>,
 ) {
     let should_save = lifecycle
@@ -156,7 +170,7 @@ pub fn save_world_on_suspend(
     if !should_save || store.last_saved_revision == Some(terrain.edit_revision()) {
         return;
     }
-    match store.save(&terrain) {
+    match store.save(&terrain, &inventory) {
         Ok(()) => {
             store.last_saved_revision = Some(terrain.edit_revision());
             info!("ASTRO-RUST world saved before suspend");
@@ -168,6 +182,7 @@ pub fn save_world_on_suspend(
 pub fn save_world_on_exit(
     mut exits: MessageReader<AppExit>,
     terrain: Res<TerrainWorld>,
+    inventory: Res<Inventory>,
     mut store: ResMut<SaveStore>,
 ) {
     if exits.read().next().is_none() {
@@ -176,7 +191,7 @@ pub fn save_world_on_exit(
     if store.last_saved_revision == Some(terrain.edit_revision()) {
         return;
     }
-    match store.save(&terrain) {
+    match store.save(&terrain, &inventory) {
         Ok(()) => {
             store.last_saved_revision = Some(terrain.edit_revision());
             info!("ASTRO-RUST world saved on exit");
@@ -188,13 +203,18 @@ pub fn save_world_on_exit(
 fn encode_save(
     terrain: &TerrainWorld,
     chunks: &[(ChunkCoord, Vec<VoxelKind>)],
+    inventory: &Inventory,
 ) -> Result<Vec<u8>, String> {
-    let mut bytes = Vec::with_capacity(32 + chunks.len() * (12 + CHUNK_BLOCKS) + 8);
+    let mut bytes = Vec::with_capacity(40 + chunks.len() * (12 + CHUNK_BLOCKS) + 8);
     bytes.extend_from_slice(MAGIC);
     push_u32(&mut bytes, FORMAT_VERSION);
     push_u64(&mut bytes, terrain.seed);
     push_u32(&mut bytes, terrain.voxel_size.to_bits());
     push_u32(&mut bytes, terrain.base_radius.to_bits());
+    push_u16(&mut bytes, inventory.regolith);
+    push_u16(&mut bytes, inventory.rock);
+    push_u16(&mut bytes, inventory.copper);
+    push_u16(&mut bytes, inventory.iron);
     push_u32(&mut bytes, chunks.len() as u32);
 
     let mut unique = HashSet::with_capacity(chunks.len());
@@ -226,12 +246,22 @@ fn decode_save(bytes: &[u8]) -> Result<SavedWorld, String> {
 
     let mut cursor = 8;
     let version = take_u32(bytes, &mut cursor)?;
-    if version != 1 && version != FORMAT_VERSION {
+    if !(1..=FORMAT_VERSION).contains(&version) {
         return Err(format!("Unsupported save format version: {version}"));
     }
     let seed = take_u64(bytes, &mut cursor)?;
     let voxel_size = f32::from_bits(take_u32(bytes, &mut cursor)?);
     let base_radius = f32::from_bits(take_u32(bytes, &mut cursor)?);
+    let inventory = if version >= 3 {
+        [
+            take_u16(bytes, &mut cursor)?,
+            take_u16(bytes, &mut cursor)?,
+            take_u16(bytes, &mut cursor)?,
+            take_u16(bytes, &mut cursor)?,
+        ]
+    } else {
+        [0; 4]
+    };
     let count = take_u32(bytes, &mut cursor)? as usize;
     if !voxel_size.is_finite()
         || voxel_size <= 0.0
@@ -241,7 +271,8 @@ fn decode_save(bytes: &[u8]) -> Result<SavedWorld, String> {
     {
         return Err("Save metadata is outside supported bounds".into());
     }
-    let expected = 32usize
+    let header_size = if version >= 3 { 40usize } else { 32usize };
+    let expected = header_size
         .checked_add(count.checked_mul(12 + CHUNK_BLOCKS).ok_or("Save size overflow")?)
         .and_then(|size| size.checked_add(8))
         .ok_or("Save size overflow")?;
@@ -285,6 +316,7 @@ fn decode_save(bytes: &[u8]) -> Result<SavedWorld, String> {
         voxel_size,
         base_radius,
         chunks,
+        inventory,
     })
 }
 
@@ -297,6 +329,9 @@ fn checksum64(bytes: &[u8]) -> u64 {
     hash
 }
 
+fn push_u16(out: &mut Vec<u8>, value: u16) {
+    out.extend_from_slice(&value.to_le_bytes());
+}
 fn push_u32(out: &mut Vec<u8>, value: u32) {
     out.extend_from_slice(&value.to_le_bytes());
 }
@@ -305,6 +340,13 @@ fn push_u64(out: &mut Vec<u8>, value: u64) {
 }
 fn push_i32(out: &mut Vec<u8>, value: i32) {
     out.extend_from_slice(&value.to_le_bytes());
+}
+fn take_u16(bytes: &[u8], cursor: &mut usize) -> Result<u16, String> {
+    let end = (*cursor).checked_add(2).ok_or("Save offset overflow")?;
+    let raw: [u8; 2] = bytes.get(*cursor..end).ok_or("Save is truncated")?
+        .try_into().map_err(|_| "Invalid u16 field")?;
+    *cursor = end;
+    Ok(u16::from_le_bytes(raw))
 }
 fn take_u32(bytes: &[u8], cursor: &mut usize) -> Result<u32, String> {
     let end = (*cursor).checked_add(4).ok_or("Save offset overflow")?;
@@ -345,18 +387,20 @@ mod tests {
         world.ensure_chunk(coord);
         world.set_block(IVec3::new(4, 4, 4), VoxelKind::Air);
         let snapshot = world.export_edited_chunks();
-        let bytes = encode_save(&world, &snapshot).unwrap();
+        let inventory = Inventory { regolith: 4, rock: 5, copper: 6, iron: 7 };
+        let bytes = encode_save(&world, &snapshot, &inventory).unwrap();
         let decoded = decode_save(&bytes).unwrap();
         assert_eq!(decoded.seed, 99);
         assert_eq!(decoded.voxel_size, 0.25);
         assert_eq!(decoded.chunks.len(), 1);
+        assert_eq!(decoded.inventory, [4, 5, 6, 7]);
         assert_eq!(decoded.chunks[0].1[4 + 16 * (4 + 16 * 4)], VoxelKind::Air);
     }
 
     #[test]
     fn damaged_save_is_rejected_by_checksum() {
         let world = TerrainWorld::new(99, 0.25, 3.0);
-        let mut bytes = encode_save(&world, &[]).unwrap();
+        let mut bytes = encode_save(&world, &[], &Inventory::default()).unwrap();
         bytes[12] ^= 0x01;
         assert!(decode_save(&bytes).is_err());
     }
