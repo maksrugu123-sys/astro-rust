@@ -61,3 +61,12 @@ The next persistence implementation must preserve these invariants:
 10. Keep world coordinates signed 32-bit only within their current documented representable range. A 64-bit coordinate/floating-origin design is a separate prerequisite before expanding that range.
 
 Do not claim the disk cache is complete until the runtime uses this index-first, lazy-read, bounded-eviction flow and the persistence tests cover interrupted writes, failed reads/writes, eviction/reload, and manifest preservation.
+
+
+## Chunk I/O queue status
+
+- `src/chunk_io.rs` is a bounded asynchronous read primitive, not the completed terrain cache.
+- It must be connected to manifest-indexed lazy chunk loading before being described as a runtime disk cache.
+- Do not expose a generated baseline chunk before any referenced disk edit record has been loaded and validated.
+- Keep checksum/version/coordinate validation in the save subsystem; the I/O worker returns raw bytes only.
+- Autosave and suspend/exit writes remain synchronous until a bounded asynchronous write/commit path is implemented.
