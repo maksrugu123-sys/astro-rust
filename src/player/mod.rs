@@ -24,7 +24,7 @@ const CAMERA_DISTANCE: f32 = 5.4;
 const MAX_PHYSICS_STEP: f32 = 0.05;
 
 #[derive(Component)]
-struct PlanetPlayer;
+pub(crate) struct PlanetPlayer;
 
 #[derive(Component)]
 struct PlayerHeading(Vec3);
