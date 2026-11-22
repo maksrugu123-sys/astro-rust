@@ -58,8 +58,8 @@ No builds, tests, APK packaging, or device profiling have been run. Terrain unit
 - Player spawn height is sampled from the generated terrain along the initial radial direction.
 - Ground contact now uses the first solid radial terrain boundary plus the capsule surface offset; the old ideal sphere is no longer used as the sole collision surface.
 - Missing terrain samples do not silently become an invisible spherical collider.
-- Added bounded voxel ray sampling for selecting the first solid block and estimating its face normal.
+- Added a 3D voxel DDA ray query for selecting the first solid block and its exact axis-aligned entry face.
 - Mining removes the selected voxel; placement adds a regolith block in the adjacent face cell and rejects placements too close to the player.
 - Added mobile MINE and PLACE touch targets. Desktop iteration uses E to mine and Q to place; the existing jump control remains separate.
 - Terrain edits flow through existing dirty-chunk invalidation and mesh refresh.
-- Known limits: contact is radial rather than a full capsule-vs-voxel solver; ray queries use fixed-step sampling; chunk streaming is not yet present, so interaction is limited to loaded chunks.
+- Known limits: contact is radial rather than a full capsule-vs-voxel solver; chunk streaming is not yet present, so interaction is limited to loaded chunks.
