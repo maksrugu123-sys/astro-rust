@@ -16,14 +16,19 @@
 - [x] Add radial gravity, jump impulse, and spherical-boundary contact response.
 - [x] Add a separate mobile jump touch target.
 - [ ] Verify physical movement and touch layout on desktop and Android.
-- [ ] Add terrain-aware collision when voxel terrain is introduced.
+- [ ] Replace spherical collision with terrain-aware collision after voxel meshing is connected.
 - [ ] Basic terrain material and horizon/sky presentation.
 - [ ] Device-aware graphics settings (High / Medium / Low).
 
 ## Milestone 2 — Chunked voxel terrain
-- [ ] Define a versioned voxel/chunk data format.
+- [x] Define a 16³ chunk data structure and negative-coordinate mapping.
+- [x] Add seeded spherical surface voxel generation.
+- [x] Add block lookup, placement, and spherical digging operations.
+- [x] Add radial surface and sphere-ground query primitives.
+- [ ] Build exposed-face chunk meshes and render voxel terrain.
+- [ ] Connect player grounding and movement to voxel terrain collision.
+- [ ] Add deterministic terrain edits with persistence across unload/reload.
 - [ ] Generate chunk meshes asynchronously.
-- [ ] Add deterministic terrain edits (dig/place).
 - [ ] Add chunk cache limits and memory budgets.
 - [ ] Add distance-based LOD and streaming priorities.
 
@@ -40,4 +45,5 @@
 - [ ] Profiling on real Android hardware before raising visual defaults.
 
 ## Current validation status
-No builds, tests, APK packaging, or device profiling have been run. Physics helpers include unit tests, but those tests have not been executed. The collision boundary is the prototype's ideal spherical surface; it is not yet terrain-mesh or voxel collision. Touch input, UI layout, and physical movement remain unverified on an Android device.
+
+No builds, tests, APK packaging, or device profiling have been run. The terrain module includes unit tests for chunk indexing, deterministic generation, digging, and block placement, but they have not been executed. Terrain data is not yet rendered; the visible planet is still the original sphere mesh and player collision still uses the ideal spherical boundary. Android packaging is not implemented.
