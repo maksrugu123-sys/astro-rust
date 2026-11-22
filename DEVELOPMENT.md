@@ -177,12 +177,13 @@ No builds, tests, APK packaging, or device profiling have been run. Terrain, gre
 - These paths are source-level hardening only and have not been exercised by runtime tests.
 
 
-## Sparse terrain edit storage and save format v4
+## Sparse terrain edits and independent chunk persistence v5
 
 - Loaded chunks now retain only the original values for voxel indices changed by gameplay; reverting a voxel to its generated value removes that delta.
 - Unloaded edited chunks are retained as sparse `(u16 voxel_index, voxel_kind)` records instead of complete 4096-voxel arrays.
-- Save format v4 is the only supported format. It serializes only changed voxel indices and values, sorts chunk and voxel records for deterministic output, and validates index bounds, duplicates, edit counts, coordinates, inventory limits, and checksum.
-- Versions 1–3 are explicitly rejected; legacy decoding and migration code have been removed. Existing saves in those formats cannot be loaded by this build.
-- This reduces edit-cache and save-snapshot growth when only a small fraction of a chunk is changed. The v4 file is still a single world file, and saving still creates a compact in-memory snapshot/encoded byte buffer.
-- Per-chunk disk files, lazy disk-backed edit retrieval/eviction, per-chunk corruption recovery, and planet-scale indexing are the next persistence milestone. They are not implemented by this batch.
-- Source changes and format-rejection coverage are uncompiled and untested; no build, test, APK, CI, or device profiling was run.
+- Save format v5 is the only supported world format. A checksummed manifest stores world metadata, inventory, chunk coordinates, and each chunk file's checksum. Every edited chunk is stored in its own compact file containing only changed voxel indices and values.
+- Chunk filenames include their content checksum. New chunk files are written and flushed first; the manifest is atomically replaced last as the save commit point. Old/orphaned chunk files are cleaned only after the manifest commit, so an interrupted save leaves the previous manifest's immutable chunk files available.
+- The loader validates the manifest and each chunk independently. A missing, oversized, malformed, coordinate-mismatched, or checksum-invalid chunk is skipped with a warning; other valid chunks still load.
+- Versions 1–4 are explicitly rejected. There is no legacy decoder or migration path.
+- This removes the single giant world-save file and whole-world checksum failure domain. However, startup still reads all indexed chunk deltas into the in-memory edit cache, and saving still snapshots all deltas before writing. A bounded disk-backed lazy cache, asynchronous scheduled disk I/O, and 64-bit world indexing remain future work.
+- Source changes and new persistence tests are uncompiled and untested; no build, test, APK, CI, or device profiling was run.
