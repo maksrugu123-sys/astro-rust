@@ -35,7 +35,8 @@
 - [x] Budget chunk generation/mesh creation to at most two chunks per frame.
 - [x] Bound active chunk count and unload stale chunk visuals.
 - [x] Persist edited chunks to a versioned, checksummed save in app-private storage (source implemented; runtime verification pending).
-- [ ] Move chunk generation and mesh building to background tasks.
+- [x] Move deterministic voxel chunk generation to bounded background worker tasks (source implemented; runtime verification pending).
+- [ ] Move mesh building to background tasks with safe asset handoff.
 - [ ] Add a bounded durable edit-cache policy and device-aware memory budgets.
 - [ ] Add distance-based LOD and streaming priorities.
 - [x] Add voxel ray queries for mining and block placement.
@@ -91,3 +92,15 @@ No builds, tests, APK packaging, or device profiling have been run. Terrain unit
 - Autosave runs every 15 seconds when the terrain edit revision has changed; an app-exit save is also registered.
 - A save is also attempted on Bevy's `WillSuspend` lifecycle message, giving the app one final active frame to flush edits before background suspension. A forced process kill without a lifecycle callback can still lose edits made since the last successful save. The in-memory edit cache can still grow with the number of edited chunks during a very long session; a disk-backed per-chunk cache is a future memory optimization.
 - Save codec unit tests were added but not run. No build, test, APK, CI, or device validation was performed.
+
+
+## Latest asynchronous streaming batch
+
+- Extracted deterministic voxel generation into a pure worker-safe function.
+- Added a bounded generation queue with at most four pending chunk jobs and at most two new requests per frame.
+- Worker threads generate only CPU-side voxel arrays; they never access Bevy ECS or render assets.
+- The main thread collects completed results, reapplies edited chunk data, builds meshes, and creates render entities with a two-chunk application budget per frame.
+- Chunk requests are ordered by distance with coordinate tie-breakers for deterministic priority.
+- Results that are no longer in the player's desired neighborhood are discarded instead of entering the active world.
+- The active loaded-chunk cap remains 40; stale visuals continue to unload in bounded batches.
+- Worker generation and queue integration have not been compiled or runtime-tested. Mesh generation remains on the main thread, and startup's initial eight chunks are still generated synchronously.
