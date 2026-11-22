@@ -175,3 +175,14 @@ No builds, tests, APK packaging, or device profiling have been run. Terrain, gre
 - Chunk-generation threads now use named fallible thread creation instead of an infallible spawn call.
 - A worker panic is caught at the generation boundary; failed jobs release their pending coordinate so the streaming scheduler can retry rather than permanently stalling that chunk.
 - These paths are source-level hardening only and have not been exercised by runtime tests.
+
+
+## Sparse terrain edit storage and save format v4
+
+- Loaded chunks now retain only the original values for voxel indices changed by gameplay; reverting a voxel to its generated value removes that delta.
+- Unloaded edited chunks are retained as sparse `(u16 voxel_index, voxel_kind)` records instead of complete 4096-voxel arrays.
+- Save format v4 serializes only changed voxel indices and values, sorts chunk and voxel records for deterministic output, and validates index bounds, duplicates, edit counts, coordinates, inventory limits, and checksum.
+- Version 1–3 saves remain readable. Legacy full chunk arrays are compared against deterministic generation during restore and converted to sparse deltas, preserving their actual edits.
+- This reduces edit-cache and save-snapshot growth when only a small fraction of a chunk is changed. The v4 file is still a single world file, and saving still creates a compact in-memory snapshot/encoded byte buffer.
+- Per-chunk disk files, lazy disk-backed edit retrieval/eviction, per-chunk corruption recovery, and planet-scale indexing are the next persistence milestone. They are not implemented by this batch.
+- Source changes and migration coverage are uncompiled and untested; no build, test, APK, CI, or device profiling was run.
