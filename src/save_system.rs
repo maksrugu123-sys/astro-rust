@@ -182,6 +182,9 @@ impl SaveStore {
 
         // If a catalogued chunk is resident and no longer edited, its old disk
         // record must be removed. Unloaded records are retained without reading them.
+        for coord in terrain.cleared_chunk_coords() {
+            records.remove(&coord);
+        }
         let catalog_coords: Vec<_> = records.keys().copied().collect();
         for coord in catalog_coords {
             if terrain.is_chunk_loaded(coord) && !terrain.is_chunk_edited(coord) {
