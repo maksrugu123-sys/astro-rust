@@ -431,6 +431,46 @@ mod tests {
     }
 
     #[test]
+    fn version_two_save_migrates_to_empty_inventory() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(MAGIC);
+        push_u32(&mut bytes, 2);
+        push_u64(&mut bytes, 88);
+        push_u32(&mut bytes, 0.25_f32.to_bits());
+        push_u32(&mut bytes, 3.0_f32.to_bits());
+        push_u32(&mut bytes, 0);
+        let checksum = checksum64(&bytes);
+        push_u64(&mut bytes, checksum);
+
+        let decoded = decode_save(&bytes).unwrap();
+        assert_eq!(decoded.seed, 88);
+        assert_eq!(decoded.inventory, [0; 4]);
+        assert!(decoded.chunks.is_empty());
+    }
+
+    #[test]
+    fn save_rejects_chunk_coordinates_outside_voxel_range() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(MAGIC);
+        push_u32(&mut bytes, FORMAT_VERSION);
+        push_u64(&mut bytes, 88);
+        push_u32(&mut bytes, 0.25_f32.to_bits());
+        push_u32(&mut bytes, 3.0_f32.to_bits());
+        for value in [0_u16; 4] {
+            push_u16(&mut bytes, value);
+        }
+        push_u32(&mut bytes, 1);
+        push_i32(&mut bytes, i32::MAX);
+        push_i32(&mut bytes, 0);
+        push_i32(&mut bytes, 0);
+        bytes.resize(bytes.len() + CHUNK_BLOCKS, VoxelKind::Air as u8);
+        let checksum = checksum64(&bytes);
+        push_u64(&mut bytes, checksum);
+
+        assert!(decode_save(&bytes).is_err());
+    }
+
+    #[test]
     fn damaged_save_is_rejected_by_checksum() {
         let world = TerrainWorld::new(99, 0.25, 3.0);
         let mut bytes = encode_save(&world, &[], &Inventory::default()).unwrap();
