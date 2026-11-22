@@ -299,6 +299,7 @@ pub struct TerrainWorld {
     chunks: HashMap<ChunkCoord, VoxelChunk>,
     edited_cache: HashMap<ChunkCoord, Vec<(u16, VoxelKind)>>,
     disk_pending: HashSet<ChunkCoord>,
+    cleared_edits: HashSet<ChunkCoord>,
     edit_revision: u64,
     pub seed: u64,
     pub voxel_size: f32,
@@ -317,6 +318,7 @@ impl TerrainWorld {
             chunks: HashMap::new(),
             edited_cache: HashMap::new(),
             disk_pending: HashSet::new(),
+            cleared_edits: HashSet::new(),
             edit_revision: 0,
             seed,
             voxel_size: voxel_size.max(0.01),
@@ -365,6 +367,7 @@ impl TerrainWorld {
         self.chunks.clear();
         self.edited_cache.clear();
         self.disk_pending.clear();
+        self.cleared_edits.clear();
         self.disk_pending.extend(saved_coords.into_iter().filter(|coord| coord.is_representable()));
         self.edit_revision = 1;
     }
@@ -379,6 +382,7 @@ impl TerrainWorld {
             return;
         }
         self.disk_pending.remove(&coord);
+        self.cleared_edits.remove(&coord);
         if !edits.is_empty() {
             self.edited_cache.insert(coord, edits);
         }
@@ -395,6 +399,10 @@ impl TerrainWorld {
     pub(crate) fn is_chunk_edited(&self, coord: ChunkCoord) -> bool {
         self.chunks.get(&coord).is_some_and(|chunk| chunk.edited)
             || self.edited_cache.contains_key(&coord)
+    }
+
+    pub(crate) fn cleared_chunk_coords(&self) -> impl Iterator<Item = ChunkCoord> + '_ {
+        self.cleared_edits.iter().copied()
     }
 
     pub fn chunk(&self, coord: ChunkCoord) -> Option<&VoxelChunk> {
@@ -464,6 +472,11 @@ impl TerrainWorld {
 
         if changed {
             self.edit_revision = self.edit_revision.wrapping_add(1);
+            if self.chunks.get(&coord).is_some_and(|chunk| chunk.edited) {
+                self.cleared_edits.remove(&coord);
+            } else {
+                self.cleared_edits.insert(coord);
+            }
             for (axis, value) in [(0, local.x), (1, local.y), (2, local.z)] {
                 if value == 0 || value == CHUNK_SIZE - 1 {
                     let mut neighbor = coord;
