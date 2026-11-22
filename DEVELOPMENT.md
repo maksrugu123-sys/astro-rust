@@ -64,7 +64,7 @@
 
 ## Current validation status
 
-No builds, tests, APK packaging, or device profiling have been run. Terrain unit tests are present but have not been executed. Chunk mesh generation, terrain-aware player contact, voxel ray queries, mining, block placement, bounded chunk streaming, and runtime edit restoration are implemented in source but remain uncompiled and unverified. Android packaging is not implemented.
+No builds, tests, APK packaging, or device profiling have been run. Terrain, greedy-meshing, worker-generation, inventory, and save-migration tests are present but have not been executed. Chunk mesh generation, terrain-aware player contact, voxel ray queries, mining, block placement, bounded asynchronous chunk generation, ore collection, inventory persistence, and world save/load are implemented in source but remain uncompiled and unverified. Android packaging is not implemented.
 
 ## Latest gameplay batch — voxel interaction
 
@@ -80,13 +80,13 @@ No builds, tests, APK packaging, or device profiling have been run. Terrain unit
 ## Latest streaming batch — bounded terrain neighborhood
 
 - Added a player-centered 3×3×3 desired chunk neighborhood.
-- At most two missing chunks are generated and meshed per frame; at most four stale chunk visuals are unloaded per frame.
+- At most two new worker jobs are requested and two completed chunks are applied per frame; at most four stale chunk visuals are unloaded per frame.
 - Active loaded terrain chunks are capped at 40 for this prototype.
 - A shared terrain material is reused by all streamed chunk entities.
 - Modified chunk block arrays are retained in an in-memory edit cache when unloaded and reapplied after deterministic regeneration.
 - Chunk load/unload marks adjacent loaded chunk meshes dirty so exposed boundary faces are refreshed.
 - Added a unit test for edit restoration after unload/reload; it has not been executed.
-- This cache survives chunk unload/reload only while the app process remains alive. Durable save files, crash recovery, asynchronous workers, and a hard bound for the accumulated edit cache are still pending.
+- The runtime edit cache survives chunk unload/reload while the process is alive; versioned world saves now persist edited chunks across launches. A hard bound for the in-memory edit cache and abrupt-kill recovery beyond the last autosave remain pending.
 
 
 ## Latest persistence batch — durable edited terrain
