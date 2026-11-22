@@ -37,6 +37,8 @@
 - [x] Persist edited chunks to a versioned, checksummed save in app-private storage (source implemented; runtime verification pending).
 - [x] Move deterministic voxel chunk generation to bounded background worker tasks (source implemented; runtime verification pending).
 - [ ] Move mesh building to background tasks with safe asset handoff.
+- [ ] Add cancellation tokens and worker-failure recovery for interrupted generation jobs.
+- [ ] Replace per-job OS thread creation with Bevy's shared compute pool after profiling thread scheduling on Android.
 - [ ] Add a bounded durable edit-cache policy and device-aware memory budgets.
 - [ ] Add distance-based LOD and streaming priorities.
 - [x] Add voxel ray queries for mining and block placement.
