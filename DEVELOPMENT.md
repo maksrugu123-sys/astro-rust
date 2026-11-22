@@ -16,7 +16,7 @@
 - [x] Add radial gravity, jump impulse, and spherical-boundary contact response.
 - [x] Add a separate mobile jump touch target.
 - [ ] Verify physical movement and touch layout on desktop and Android.
-- [ ] Replace spherical collision with terrain-aware collision after voxel meshing is connected.
+- [ ] Replace spherical collision with terrain-aware collision.
 - [ ] Basic terrain material and horizon/sky presentation.
 - [ ] Device-aware graphics settings (High / Medium / Low).
 
@@ -25,12 +25,15 @@
 - [x] Add seeded spherical surface voxel generation.
 - [x] Add block lookup, placement, and spherical digging operations.
 - [x] Add radial surface and sphere-ground query primitives.
-- [ ] Build exposed-face chunk meshes and render voxel terrain.
+- [x] Build exposed-face chunk meshes and render voxel terrain.
+- [x] Replace the smooth placeholder planet mesh with voxel chunk visuals.
+- [x] Add per-chunk dirty flags and targeted mesh rebuild support.
 - [ ] Connect player grounding and movement to voxel terrain collision.
 - [ ] Add deterministic terrain edits with persistence across unload/reload.
-- [ ] Generate chunk meshes asynchronously.
+- [ ] Generate chunks and meshes asynchronously.
 - [ ] Add chunk cache limits and memory budgets.
 - [ ] Add distance-based LOD and streaming priorities.
+- [ ] Add an in-game mining tool and block placement controls.
 
 ## Milestone 3 — Exploration systems
 - [ ] Seeded biomes, resources, and points of interest.
@@ -46,4 +49,4 @@
 
 ## Current validation status
 
-No builds, tests, APK packaging, or device profiling have been run. The terrain module includes unit tests for chunk indexing, deterministic generation, digging, and block placement, but they have not been executed. Terrain data is not yet rendered; the visible planet is still the original sphere mesh and player collision still uses the ideal spherical boundary. Android packaging is not implemented.
+No builds, tests, APK packaging, or device profiling have been run. Terrain unit tests are present but have not been executed. Chunk mesh generation and dirty-mesh rebuilding are implemented in source but remain uncompiled and unverified. Android packaging is not implemented.
