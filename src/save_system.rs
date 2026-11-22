@@ -1,4 +1,4 @@
-//! Versioned, checksummed persistence for edited terrain chunks.
+//! Versioned, checksummed persistence for sparse terrain edits.
 use std::{
     collections::HashSet,
     fs::{self, File},
@@ -10,15 +10,18 @@ use bevy::prelude::*;
 
 use crate::{
     player::Inventory,
-    terrain::{ChunkCoord, TerrainWorld, VoxelKind},
+    terrain::{ChunkCoord, SavedChunkData, TerrainWorld, VoxelKind},
 };
 
 const SAVE_FILE: &str = "world.astrosave";
 const TEMP_FILE: &str = "world.astrosave.tmp";
 const MAGIC: &[u8; 8] = b"ASTRSAV1";
-const FORMAT_VERSION: u32 = 3;
+const FORMAT_VERSION: u32 = 4;
 const CHUNK_BLOCKS: usize = 16 * 16 * 16;
 const MAX_SAVED_CHUNKS: usize = 8_192;
+const MAX_CHUNK_EDIT_BYTES: usize = 2 + CHUNK_BLOCKS * 3;
+const MAX_SAVE_BYTES: u64 =
+    (40 + MAX_SAVED_CHUNKS * (12 + MAX_CHUNK_EDIT_BYTES) + 8) as u64;
 const AUTOSAVE_SECONDS: f32 = 15.0;
 
 #[derive(Resource)]
@@ -67,8 +70,7 @@ impl SaveStore {
             return Ok(None);
         }
         let metadata = fs::metadata(&path).map_err(|e| format!("Cannot inspect save: {e}"))?;
-        let max_size = 40 + MAX_SAVED_CHUNKS * (12 + CHUNK_BLOCKS) + 8;
-        if metadata.len() > max_size as u64 {
+        if metadata.len() > MAX_SAVE_BYTES {
             return Err("Save file exceeds the supported size limit".into());
         }
         let mut bytes = Vec::with_capacity(metadata.len() as usize);
@@ -86,12 +88,10 @@ impl SaveStore {
         if edited_count > MAX_SAVED_CHUNKS {
             return Err(format!(
                 "World contains {} edited chunks; save limit is {}",
-                edited_count,
-                MAX_SAVED_CHUNKS
+                edited_count, MAX_SAVED_CHUNKS
             ));
         }
         let chunks = terrain.export_edited_chunks();
-
         let bytes = encode_save(terrain, &chunks, inventory)?;
         fs::create_dir_all(directory)
             .map_err(|e| format!("Cannot create save directory: {e}"))?;
@@ -112,7 +112,7 @@ struct SavedWorld {
     seed: u64,
     voxel_size: f32,
     base_radius: f32,
-    chunks: Vec<(ChunkCoord, Vec<VoxelKind>)>,
+    chunks: Vec<(ChunkCoord, SavedChunkData)>,
     inventory: [u16; 4],
 }
 
@@ -218,10 +218,23 @@ pub fn save_world_on_exit(
 
 fn encode_save(
     terrain: &TerrainWorld,
-    chunks: &[(ChunkCoord, Vec<VoxelKind>)],
+    chunks: &[(ChunkCoord, Vec<(u16, VoxelKind)>)],
     inventory: &Inventory,
 ) -> Result<Vec<u8>, String> {
-    let mut bytes = Vec::with_capacity(40 + chunks.len() * (12 + CHUNK_BLOCKS) + 8);
+    if inventory.regolith > 99
+        || inventory.rock > 99
+        || inventory.copper > 99
+        || inventory.iron > 99
+    {
+        return Err("Inventory contains a stack above its supported capacity".into());
+    }
+    if chunks.len() > MAX_SAVED_CHUNKS {
+        return Err("Save contains too many edited chunks".into());
+    }
+
+    let mut ordered: Vec<_> = chunks.iter().collect();
+    ordered.sort_by_key(|(coord, _)| (coord.x, coord.y, coord.z));
+    let mut bytes = Vec::with_capacity(40 + chunks.len() * 32 + 8);
     bytes.extend_from_slice(MAGIC);
     push_u32(&mut bytes, FORMAT_VERSION);
     push_u64(&mut bytes, terrain.seed);
@@ -233,24 +246,51 @@ fn encode_save(
     push_u16(&mut bytes, inventory.iron);
     push_u32(&mut bytes, chunks.len() as u32);
 
-    if inventory.regolith > 99 || inventory.rock > 99 || inventory.copper > 99 || inventory.iron > 99 {
-        return Err("Inventory contains a stack above its supported capacity".into());
-    }
     let mut unique = HashSet::with_capacity(chunks.len());
-    for (coord, blocks) in chunks {
-        if !coord.is_representable() || blocks.len() != CHUNK_BLOCKS || !unique.insert(*coord) {
+    for (coord, edits) in ordered {
+        if !coord.is_representable()
+            || edits.is_empty()
+            || edits.len() > CHUNK_BLOCKS
+            || !unique.insert(*coord)
+        {
             return Err("Invalid or duplicate edited chunk in save snapshot".into());
         }
+        let mut sorted_edits = edits.clone();
+        sorted_edits.sort_by_key(|(index, _)| *index);
+        if sorted_edits.windows(2).any(|pair| pair[0].0 == pair[1].0) {
+            return Err("Save chunk contains duplicate voxel indices".into());
+        }
+
         push_i32(&mut bytes, coord.x);
         push_i32(&mut bytes, coord.y);
         push_i32(&mut bytes, coord.z);
-        for block in blocks {
-            bytes.push(*block as u8);
+        push_u16(&mut bytes, sorted_edits.len() as u16);
+        for (index, kind) in sorted_edits {
+            if index as usize >= CHUNK_BLOCKS {
+                return Err("Save chunk contains an invalid voxel index".into());
+            }
+            bytes.extend_from_slice(&index.to_le_bytes());
+            bytes.push(kind as u8);
         }
     }
+
     let checksum = checksum64(&bytes);
     push_u64(&mut bytes, checksum);
+    if bytes.len() as u64 > MAX_SAVE_BYTES {
+        return Err("Encoded save exceeds the supported size limit".into());
+    }
     Ok(bytes)
+}
+
+fn decode_voxel(value: u8) -> Result<VoxelKind, String> {
+    match value {
+        0 => Ok(VoxelKind::Air),
+        1 => Ok(VoxelKind::Regolith),
+        2 => Ok(VoxelKind::Rock),
+        3 => Ok(VoxelKind::CopperOre),
+        4 => Ok(VoxelKind::IronOre),
+        _ => Err("Save contains an unknown voxel kind".into()),
+    }
 }
 
 fn decode_save(bytes: &[u8]) -> Result<SavedWorld, String> {
@@ -290,13 +330,18 @@ fn decode_save(bytes: &[u8]) -> Result<SavedWorld, String> {
     {
         return Err("Save metadata is outside supported bounds".into());
     }
+
     let header_size = if version >= 3 { 40usize } else { 32usize };
-    let expected = header_size
-        .checked_add(count.checked_mul(12 + CHUNK_BLOCKS).ok_or("Save size overflow")?)
-        .and_then(|size| size.checked_add(8))
-        .ok_or("Save size overflow")?;
-    if bytes.len() != expected || cursor > payload_end {
-        return Err("Save length does not match its chunk index".into());
+    if version < 4 {
+        let expected = header_size
+            .checked_add(count.checked_mul(12 + CHUNK_BLOCKS).ok_or("Save size overflow")?)
+            .and_then(|size| size.checked_add(8))
+            .ok_or("Save size overflow")?;
+        if bytes.len() != expected || cursor > payload_end {
+            return Err("Legacy save length does not match its chunk index".into());
+        }
+    } else if cursor > payload_end {
+        return Err("Save header is truncated".into());
     }
 
     let mut chunks = Vec::with_capacity(count);
@@ -313,22 +358,35 @@ fn decode_save(bytes: &[u8]) -> Result<SavedWorld, String> {
         if !unique.insert(coord) {
             return Err("Save contains a duplicate chunk coordinate".into());
         }
-        let end = cursor.checked_add(CHUNK_BLOCKS).ok_or("Save size overflow")?;
-        let raw = bytes.get(cursor..end).ok_or("Save chunk is truncated")?;
-        let mut blocks = Vec::with_capacity(CHUNK_BLOCKS);
-        for value in raw {
-            let kind = match value {
-                0 => VoxelKind::Air,
-                1 => VoxelKind::Regolith,
-                2 => VoxelKind::Rock,
-                3 => VoxelKind::CopperOre,
-                4 => VoxelKind::IronOre,
-                _ => return Err("Save contains an unknown voxel kind".into()),
-            };
-            blocks.push(kind);
-        }
-        cursor = end;
-        chunks.push((coord, blocks));
+
+        let data = if version < 4 {
+            let end = cursor.checked_add(CHUNK_BLOCKS).ok_or("Save size overflow")?;
+            let raw = bytes.get(cursor..end).ok_or("Save chunk is truncated")?;
+            let mut blocks = Vec::with_capacity(CHUNK_BLOCKS);
+            for value in raw {
+                blocks.push(decode_voxel(*value)?);
+            }
+            cursor = end;
+            SavedChunkData::LegacyFull(blocks)
+        } else {
+            let edit_count = take_u16(bytes, &mut cursor)? as usize;
+            if edit_count == 0 || edit_count > CHUNK_BLOCKS {
+                return Err("Save chunk edit count is outside supported bounds".into());
+            }
+            let mut edits = Vec::with_capacity(edit_count);
+            let mut indices = HashSet::with_capacity(edit_count);
+            for _ in 0..edit_count {
+                let index = take_u16(bytes, &mut cursor)?;
+                if index as usize >= CHUNK_BLOCKS || !indices.insert(index) {
+                    return Err("Save chunk contains an invalid or duplicate voxel index".into());
+                }
+                let kind = decode_voxel(*bytes.get(cursor).ok_or("Save chunk is truncated")?)?;
+                cursor += 1;
+                edits.push((index, kind));
+            }
+            SavedChunkData::Sparse(edits)
+        };
+        chunks.push((coord, data));
     }
     if cursor != payload_end {
         return Err("Save contains unexpected trailing data".into());
@@ -403,12 +461,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn save_round_trip_preserves_seed_and_voxel_edits() {
+    fn sparse_save_round_trip_preserves_only_changed_voxels() {
         let mut world = TerrainWorld::new(99, 0.25, 3.0);
         let coord = ChunkCoord { x: 0, y: 0, z: 0 };
         world.ensure_chunk(coord);
-        world.set_block(IVec3::new(4, 4, 4), VoxelKind::Air);
+        let position = IVec3::new(4, 4, 4);
+        let original = world.get_block(position).unwrap();
+        let changed = if original == VoxelKind::Air { VoxelKind::Rock } else { VoxelKind::Air };
+        assert!(world.set_block(position, changed));
         let snapshot = world.export_edited_chunks();
+        assert_eq!(snapshot[0].1.len(), 1);
         let inventory = Inventory { regolith: 4, rock: 5, copper: 6, iron: 7 };
         let bytes = encode_save(&world, &snapshot, &inventory).unwrap();
         let decoded = decode_save(&bytes).unwrap();
@@ -416,7 +478,23 @@ mod tests {
         assert_eq!(decoded.voxel_size, 0.25);
         assert_eq!(decoded.chunks.len(), 1);
         assert_eq!(decoded.inventory, [4, 5, 6, 7]);
-        assert_eq!(decoded.chunks[0].1[4 + 16 * (4 + 16 * 4)], VoxelKind::Air);
+        match &decoded.chunks[0].1 {
+            SavedChunkData::Sparse(edits) => assert_eq!(edits, &vec![(4 + 16 * (4 + 16 * 4), changed)]),
+            _ => panic!("v4 must decode to sparse chunk edits"),
+        }
+    }
+
+    #[test]
+    fn reverting_a_voxel_to_generated_value_removes_the_edit() {
+        let mut world = TerrainWorld::new(5, 0.25, 3.0);
+        let coord = ChunkCoord { x: 0, y: 0, z: 0 };
+        world.ensure_chunk(coord);
+        let position = IVec3::new(4, 4, 4);
+        let original = world.get_block(position).unwrap();
+        let changed = if original == VoxelKind::Air { VoxelKind::Rock } else { VoxelKind::Air };
+        assert!(world.set_block(position, changed));
+        assert!(world.set_block(position, original));
+        assert_eq!(world.edited_chunk_count(), 0);
     }
 
     #[test]
@@ -430,7 +508,6 @@ mod tests {
         push_u32(&mut bytes, 0);
         let checksum = checksum64(&bytes);
         push_u64(&mut bytes, checksum);
-
         let decoded = decode_save(&bytes).unwrap();
         assert_eq!(decoded.seed, 77);
         assert_eq!(decoded.inventory, [0; 4]);
@@ -448,11 +525,32 @@ mod tests {
         push_u32(&mut bytes, 0);
         let checksum = checksum64(&bytes);
         push_u64(&mut bytes, checksum);
-
         let decoded = decode_save(&bytes).unwrap();
         assert_eq!(decoded.seed, 88);
         assert_eq!(decoded.inventory, [0; 4]);
         assert!(decoded.chunks.is_empty());
+    }
+
+    #[test]
+    fn version_three_full_chunk_is_migrated_to_legacy_variant() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(MAGIC);
+        push_u32(&mut bytes, 3);
+        push_u64(&mut bytes, 88);
+        push_u32(&mut bytes, 0.25_f32.to_bits());
+        push_u32(&mut bytes, 3.0_f32.to_bits());
+        for value in [0_u16; 4] {
+            push_u16(&mut bytes, value);
+        }
+        push_u32(&mut bytes, 1);
+        push_i32(&mut bytes, 0);
+        push_i32(&mut bytes, 0);
+        push_i32(&mut bytes, 0);
+        bytes.resize(bytes.len() + CHUNK_BLOCKS, VoxelKind::Air as u8);
+        let checksum = checksum64(&bytes);
+        push_u64(&mut bytes, checksum);
+        let decoded = decode_save(&bytes).unwrap();
+        assert!(matches!(decoded.chunks[0].1, SavedChunkData::LegacyFull(_)));
     }
 
     #[test]
@@ -470,18 +568,20 @@ mod tests {
         push_i32(&mut bytes, i32::MAX);
         push_i32(&mut bytes, 0);
         push_i32(&mut bytes, 0);
-        bytes.resize(bytes.len() + CHUNK_BLOCKS, VoxelKind::Air as u8);
+        push_u16(&mut bytes, 1);
+        bytes.extend_from_slice(&0_u16.to_le_bytes());
+        bytes.push(VoxelKind::Air as u8);
         let checksum = checksum64(&bytes);
         push_u64(&mut bytes, checksum);
-
         assert!(decode_save(&bytes).is_err());
     }
 
     #[test]
     fn damaged_save_is_rejected_by_checksum() {
         let world = TerrainWorld::new(99, 0.25, 3.0);
-        let mut bytes = encode_save(&world, &[], &Inventory::default()).unwrap();
-        bytes[12] ^= 0x01;
-        assert!(decode_save(&bytes).is_err());
+        let bytes = encode_save(&world, &[], &Inventory::default()).unwrap();
+        let mut damaged = bytes;
+        damaged[12] ^= 0x01;
+        assert!(decode_save(&damaged).is_err());
     }
 }
