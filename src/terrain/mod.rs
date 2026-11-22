@@ -1,6 +1,6 @@
 //! Chunked voxel data and spherical terrain rendering for ASTRO-RUST.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use bevy::{
     asset::RenderAssetUsages,
@@ -11,6 +11,10 @@ use bevy::{
 pub const CHUNK_SIZE: i32 = 16;
 const CHUNK_VOLUME: usize = (CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE) as usize;
 const SURFACE_NOISE_VOXELS: f32 = 1.35;
+const STREAM_RADIUS: i32 = 1;
+const MAX_LOADED_CHUNKS: usize = 32;
+const MAX_CHUNK_LOADS_PER_FRAME: usize = 2;
+const MAX_CHUNK_UNLOADS_PER_FRAME: usize = 4;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[repr(u8)]
@@ -106,6 +110,7 @@ impl VoxelChunk {
 #[derive(Resource, Debug)]
 pub struct TerrainWorld {
     chunks: HashMap<ChunkCoord, VoxelChunk>,
+    edited_cache: HashMap<ChunkCoord, Vec<VoxelKind>>,
     pub seed: u64,
     pub voxel_size: f32,
     pub base_radius: f32,
@@ -121,6 +126,7 @@ impl TerrainWorld {
     pub fn new(seed: u64, voxel_size: f32, base_radius: f32) -> Self {
         Self {
             chunks: HashMap::new(),
+            edited_cache: HashMap::new(),
             seed,
             voxel_size: voxel_size.max(0.01),
             base_radius: base_radius.max(0.1),
@@ -133,6 +139,33 @@ impl TerrainWorld {
 
     pub fn chunk(&self, coord: ChunkCoord) -> Option<&VoxelChunk> {
         self.chunks.get(&coord)
+    }
+
+    pub fn contains_chunk(&self, coord: ChunkCoord) -> bool {
+        self.chunks.contains_key(&coord)
+    }
+
+    /// Unloads a chunk while retaining player edits for a later reload.
+    pub fn unload_chunk(&mut self, coord: ChunkCoord) -> bool {
+        let Some(chunk) = self.chunks.remove(&coord) else {
+            return false;
+        };
+        if chunk.edited {
+            self.edited_cache.insert(coord, chunk.blocks);
+        }
+        for neighbor in [
+            ChunkCoord { x: coord.x - 1, y: coord.y, z: coord.z },
+            ChunkCoord { x: coord.x + 1, y: coord.y, z: coord.z },
+            ChunkCoord { x: coord.x, y: coord.y - 1, z: coord.z },
+            ChunkCoord { x: coord.x, y: coord.y + 1, z: coord.z },
+            ChunkCoord { x: coord.x, y: coord.y, z: coord.z - 1 },
+            ChunkCoord { x: coord.x, y: coord.y, z: coord.z + 1 },
+        ] {
+            if let Some(chunk) = self.chunks.get_mut(&neighbor) {
+                chunk.mesh_dirty = true;
+            }
+        }
+        true
     }
 
     pub fn ensure_chunk(&mut self, coord: ChunkCoord) {
@@ -165,10 +198,29 @@ impl TerrainWorld {
             }
         }
 
+        // Reapply player edits after deterministic regeneration.
+        if let Some(saved_blocks) = self.edited_cache.remove(&coord) {
+            if saved_blocks.len() == CHUNK_VOLUME {
+                chunk.blocks = saved_blocks;
+                chunk.edited = true;
+            }
+        }
         // Initial generation is not a gameplay edit.
-        chunk.edited = false;
         chunk.mesh_dirty = true;
         self.chunks.insert(coord, chunk);
+
+        for neighbor in [
+            ChunkCoord { x: coord.x - 1, y: coord.y, z: coord.z },
+            ChunkCoord { x: coord.x + 1, y: coord.y, z: coord.z },
+            ChunkCoord { x: coord.x, y: coord.y - 1, z: coord.z },
+            ChunkCoord { x: coord.x, y: coord.y + 1, z: coord.z },
+            ChunkCoord { x: coord.x, y: coord.y, z: coord.z - 1 },
+            ChunkCoord { x: coord.x, y: coord.y, z: coord.z + 1 },
+        ] {
+            if let Some(chunk) = self.chunks.get_mut(&neighbor) {
+                chunk.mesh_dirty = true;
+            }
+        }
     }
 
     pub fn get_block(&self, world_voxel: IVec3) -> Option<VoxelKind> {
@@ -375,6 +427,23 @@ struct TerrainChunkVisual {
     mesh: Handle<Mesh>,
 }
 
+#[derive(Resource)]
+pub struct TerrainMaterial(Handle<StandardMaterial>);
+
+/// Creates one shared material for all streamed terrain chunks.
+pub fn setup_terrain_material(
+    mut commands: Commands,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    let material = materials.add(StandardMaterial {
+        base_color: Color::WHITE,
+        perceptual_roughness: 0.96,
+        metallic: 0.0,
+        ..default()
+    });
+    commands.insert_resource(TerrainMaterial(material));
+}
+
 /// Preloads the eight chunks whose bounds surround the planet origin.
 pub fn generate_starting_chunks(mut terrain: ResMut<TerrainWorld>) {
     for z in -1..=0 {
@@ -391,15 +460,8 @@ pub fn spawn_chunk_meshes(
     mut commands: Commands,
     mut terrain: ResMut<TerrainWorld>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    material: Res<TerrainMaterial>,
 ) {
-    let material = materials.add(StandardMaterial {
-        base_color: Color::WHITE,
-        perceptual_roughness: 0.96,
-        metallic: 0.0,
-        ..default()
-    });
-
     let coords: Vec<ChunkCoord> = terrain.chunks.keys().copied().collect();
     for coord in coords {
         let mesh = build_chunk_mesh(&terrain, coord);
@@ -410,11 +472,78 @@ pub fn spawn_chunk_meshes(
 
         commands.spawn((
             Mesh3d(handle.clone()),
-            MeshMaterial3d(material.clone()),
+            MeshMaterial3d(material.0.clone()),
             Transform::IDENTITY,
             TerrainChunkVisual { coord, mesh: handle },
             Name::new(format!("Terrain Chunk {},{},{}", coord.x, coord.y, coord.z)),
         ));
+    }
+}
+
+/// Maintains a 3x3x3 chunk neighborhood around the player. Loading and unloading
+/// are budgeted per frame to avoid a large one-frame generation/mesh spike.
+pub fn stream_terrain_chunks(
+    mut commands: Commands,
+    player_query: Query<&Transform, With<crate::player::PlanetPlayer>>,
+    mut terrain: ResMut<TerrainWorld>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    material: Res<TerrainMaterial>,
+    visuals: Query<(Entity, &TerrainChunkVisual)>,
+) {
+    let Ok(player) = player_query.single() else {
+        return;
+    };
+    let player_voxel = (player.translation / terrain.voxel_size).floor().as_ivec3();
+    let center = ChunkCoord::from_voxel(player_voxel);
+    let mut desired = HashSet::new();
+    for z in -STREAM_RADIUS..=STREAM_RADIUS {
+        for y in -STREAM_RADIUS..=STREAM_RADIUS {
+            for x in -STREAM_RADIUS..=STREAM_RADIUS {
+                desired.insert(ChunkCoord {
+                    x: center.x + x,
+                    y: center.y + y,
+                    z: center.z + z,
+                });
+            }
+        }
+    }
+
+    let stale: Vec<(Entity, ChunkCoord)> = visuals
+        .iter()
+        .filter(|(_, visual)| !desired.contains(&visual.coord))
+        .map(|(entity, visual)| (entity, visual.coord))
+        .take(MAX_CHUNK_UNLOADS_PER_FRAME)
+        .collect();
+    for (entity, coord) in stale {
+        commands.entity(entity).despawn();
+        terrain.unload_chunk(coord);
+    }
+
+    let mut loaded_this_frame = 0;
+    for coord in desired.iter().copied() {
+        if loaded_this_frame >= MAX_CHUNK_LOADS_PER_FRAME
+            || terrain.loaded_chunk_count() >= MAX_LOADED_CHUNKS
+        {
+            break;
+        }
+        if terrain.contains_chunk(coord) {
+            continue;
+        }
+
+        terrain.ensure_chunk(coord);
+        let mesh = build_chunk_mesh(&terrain, coord);
+        let handle = meshes.add(mesh);
+        if let Some(chunk) = terrain.chunks.get_mut(&coord) {
+            chunk.mesh_dirty = false;
+        }
+        commands.spawn((
+            Mesh3d(handle.clone()),
+            MeshMaterial3d(material.0.clone()),
+            Transform::IDENTITY,
+            TerrainChunkVisual { coord, mesh: handle },
+            Name::new(format!("Terrain Chunk {},{},{}", coord.x, coord.y, coord.z)),
+        ));
+        loaded_this_frame += 1;
     }
 }
 
@@ -550,6 +679,19 @@ mod tests {
         let removed = world.dig_sphere(Vec3::new(0.0, 2.8, 0.0), 0.65);
         assert!(removed > 0);
         assert!(world.chunks.values().any(|chunk| chunk.edited));
+    }
+
+    #[test]
+    fn edited_chunk_restores_blocks_after_unload_and_reload() {
+        let mut world = TerrainWorld::new(7, 0.25, 3.0);
+        let coord = ChunkCoord { x: 0, y: 0, z: 0 };
+        world.ensure_chunk(coord);
+        let voxel = IVec3::new(4, 4, 4);
+        assert!(world.set_block(voxel, VoxelKind::Air));
+        assert!(world.unload_chunk(coord));
+        assert!(!world.contains_chunk(coord));
+        world.ensure_chunk(coord);
+        assert_eq!(world.get_block(voxel), Some(VoxelKind::Air));
     }
 
     #[test]
