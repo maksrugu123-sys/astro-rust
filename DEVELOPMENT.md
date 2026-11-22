@@ -160,3 +160,11 @@ No builds, tests, APK packaging, or device profiling have been run. Terrain, gre
 ### Placement and streaming ownership fix
 
 - Block placement now requires the target voxel to be present and empty in a loaded chunk. An unloaded target is no longer mistaken for air, so the input handler cannot synchronously generate a chunk that bypasses the streaming system's mesh/entity registration.
+
+
+### Streaming and save-boundary hardening
+
+- The streaming neighborhood now filters chunk coordinates outside the representable signed 32-bit voxel range before queuing worker generation. This prevents edge-neighborhood jobs from overflowing when building voxel coordinates.
+- Save size metadata is compared as u64 before conversion to usize.
+- The edited-chunk count is checked against the save cap before full chunk arrays are cloned into the save snapshot, avoiding a large unnecessary allocation when a world already exceeds the supported save limit.
+- Save encoding also rejects invalid chunk coordinates and inventory stacks above the supported 99-item cap.
