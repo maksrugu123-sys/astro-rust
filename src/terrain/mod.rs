@@ -135,7 +135,9 @@ fn generate_chunk(coord: ChunkCoord, seed: u64, voxel_size: f32, base_radius: f3
             }
         }
     }
-    // Worker generation is deterministic world data, not a gameplay edit.
+    // Generation writes the dense baseline through set(); discard the
+    // temporary originals map so generated voxels are never treated as edits.
+    chunk.originals.clear();
     chunk.edited = false;
     chunk.mesh_dirty = true;
     chunk
