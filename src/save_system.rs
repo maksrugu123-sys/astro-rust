@@ -37,6 +37,7 @@ pub struct SaveStore {
     catalog: HashMap<ChunkCoord, u64>,
     loaded_records: HashSet<ChunkCoord>,
     failed_reads: HashSet<ChunkCoord>,
+    load_failed: bool,
 }
 
 impl SaveStore {
@@ -65,6 +66,7 @@ impl SaveStore {
             catalog: HashMap::new(),
             loaded_records: HashSet::new(),
             failed_reads: HashSet::new(),
+            load_failed: false,
         }
     }
 
@@ -169,6 +171,9 @@ impl SaveStore {
     }
 
     fn save(&mut self, terrain: &TerrainWorld, inventory: &Inventory) -> Result<(), String> {
+        if self.load_failed {
+            return Err("An existing world save could not be validated; refusing to overwrite it".into());
+        }
         let Some(directory) = self.directory.as_ref() else {
             return Err("No writable application data directory is available".into());
         };
@@ -241,7 +246,7 @@ pub fn load_saved_world(
 ) {
     match store.load() {
         Ok(Some(save)) => {
-            let saved_coords = save.chunk_records.keys().copied().collect();
+            let saved_coords: Vec<ChunkCoord> = save.chunk_records.keys().copied().collect();
             terrain.restore_saved_world_index(
                 save.seed,
                 save.voxel_size,
@@ -251,14 +256,24 @@ pub fn load_saved_world(
             store.catalog = save.chunk_records;
             store.loaded_records.clear();
             store.failed_reads.clear();
+            store.load_failed = false;
             inventory.regolith = save.inventory[0].min(99);
             inventory.rock = save.inventory[1].min(99);
             inventory.copper = save.inventory[2].min(99);
             inventory.iron = save.inventory[3].min(99);
             info!("Loaded ASTRO-RUST world save");
         }
-        Ok(None) => info!("No ASTRO-RUST save found; generating a new world"),
-        Err(error) => warn!("Could not load ASTRO-RUST save: {error}"),
+        Ok(None) => {
+            store.catalog.clear();
+            store.loaded_records.clear();
+            store.failed_reads.clear();
+            store.load_failed = false;
+            info!("No ASTRO-RUST save found; generating a new world");
+        }
+        Err(error) => {
+            store.load_failed = true;
+            warn!("Could not load ASTRO-RUST save: {error}");
+        }
     }
 }
 
