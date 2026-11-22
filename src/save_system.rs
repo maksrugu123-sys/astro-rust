@@ -548,41 +548,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn sparse_save_round_trip_preserves_only_changed_voxels() {
-        let mut world = TerrainWorld::new(99, 0.25, 3.0);
-        let coord = ChunkCoord { x: 0, y: 0, z: 0 };
-        world.ensure_chunk(coord);
-        let position = IVec3::new(4, 4, 4);
-        let original = world.get_block(position).unwrap();
-        let changed = if original == VoxelKind::Air { VoxelKind::Rock } else { VoxelKind::Air };
-        assert!(world.set_block(position, changed));
-        let snapshot = world.export_edited_chunks();
-        assert_eq!(snapshot[0].1.len(), 1);
+    fn sparse_manifest_and_independent_chunk_round_trip() {
+        let world = TerrainWorld::new(99, 0.25, 3.0);
+        let coord = ChunkCoord { x: -2, y: 1, z: 3 };
+        let edits = vec![(7, VoxelKind::Rock), (4095, VoxelKind::Air)];
+        let chunks = vec![(coord, edits.clone())];
         let inventory = Inventory { regolith: 4, rock: 5, copper: 6, iron: 7 };
-        let bytes = encode_save(&world, &snapshot, &inventory).unwrap();
-        let decoded = decode_save(&bytes).unwrap();
-        assert_eq!(decoded.seed, 99);
-        assert_eq!(decoded.voxel_size, 0.25);
-        assert_eq!(decoded.chunks.len(), 1);
-        assert_eq!(decoded.inventory, [4, 5, 6, 7]);
-        assert_eq!(decoded.chunks[0].1, vec![(4 + 16 * (4 + 16 * 4), changed)]);
+        let manifest = encode_manifest(&world, &chunks, &inventory).unwrap();
+        let decoded_manifest = decode_manifest(&manifest).unwrap();
+        assert_eq!(decoded_manifest.seed, 99);
+        assert_eq!(decoded_manifest.voxel_size, 0.25);
+        assert_eq!(decoded_manifest.base_radius, 3.0);
+        assert_eq!(decoded_manifest.inventory, [4, 5, 6, 7]);
+        assert_eq!(decoded_manifest.chunk_coords, vec![coord]);
+
+        let chunk_file = encode_chunk(coord, &edits).unwrap();
+        assert_eq!(decode_chunk(&chunk_file, coord).unwrap(), edits);
     }
 
     #[test]
-    fn reverting_a_voxel_to_generated_value_removes_the_edit() {
-        let mut world = TerrainWorld::new(5, 0.25, 3.0);
-        let coord = ChunkCoord { x: 0, y: 0, z: 0 };
-        world.ensure_chunk(coord);
-        let position = IVec3::new(4, 4, 4);
-        let original = world.get_block(position).unwrap();
-        let changed = if original == VoxelKind::Air { VoxelKind::Rock } else { VoxelKind::Air };
-        assert!(world.set_block(position, changed));
-        assert!(world.set_block(position, original));
-        assert_eq!(world.edited_chunk_count(), 0);
-    }
-
-    #[test]
-    fn old_save_versions_are_rejected_explicitly() {
+    fn manifest_rejects_old_save_versions() {
         for version in 1..FORMAT_VERSION {
             let mut bytes = Vec::new();
             bytes.extend_from_slice(MAGIC);
@@ -590,20 +575,38 @@ mod tests {
             push_u64(&mut bytes, 77);
             push_u32(&mut bytes, 0.25_f32.to_bits());
             push_u32(&mut bytes, 3.0_f32.to_bits());
-            push_u16(&mut bytes, 0);
-            push_u16(&mut bytes, 0);
-            push_u16(&mut bytes, 0);
-            push_u16(&mut bytes, 0);
+            for value in [0_u16; 4] {
+                push_u16(&mut bytes, value);
+            }
             push_u32(&mut bytes, 0);
             let checksum = checksum64(&bytes);
             push_u64(&mut bytes, checksum);
-            let error = decode_save(&bytes).err().unwrap();
-            assert!(error.contains("requires v4"));
+            let error = decode_manifest(&bytes).err().unwrap();
+            assert!(error.contains("requires v5"));
         }
     }
 
     #[test]
-    fn save_rejects_chunk_coordinates_outside_voxel_range() {
+    fn one_damaged_chunk_does_not_change_other_chunk_records() {
+        let first = ChunkCoord { x: 0, y: 0, z: 0 };
+        let second = ChunkCoord { x: 1, y: 0, z: 0 };
+        let first_bytes = encode_chunk(first, &[(3, VoxelKind::Air)]).unwrap();
+        let mut second_bytes = encode_chunk(second, &[(4, VoxelKind::CopperOre)]).unwrap();
+        second_bytes[20] ^= 0x20;
+        assert_eq!(decode_chunk(&first_bytes, first).unwrap(), vec![(3, VoxelKind::Air)]);
+        assert!(decode_chunk(&second_bytes, second).is_err());
+    }
+
+    #[test]
+    fn chunk_file_rejects_manifest_coordinate_mismatch() {
+        let stored = ChunkCoord { x: 2, y: 0, z: 0 };
+        let expected = ChunkCoord { x: 1, y: 0, z: 0 };
+        let bytes = encode_chunk(stored, &[(0, VoxelKind::Rock)]).unwrap();
+        assert!(decode_chunk(&bytes, expected).is_err());
+    }
+
+    #[test]
+    fn manifest_rejects_out_of_range_chunk_coordinates() {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(MAGIC);
         push_u32(&mut bytes, FORMAT_VERSION);
@@ -617,20 +620,17 @@ mod tests {
         push_i32(&mut bytes, i32::MAX);
         push_i32(&mut bytes, 0);
         push_i32(&mut bytes, 0);
-        push_u16(&mut bytes, 1);
-        bytes.extend_from_slice(&0_u16.to_le_bytes());
-        bytes.push(VoxelKind::Air as u8);
         let checksum = checksum64(&bytes);
         push_u64(&mut bytes, checksum);
-        assert!(decode_save(&bytes).is_err());
+        assert!(decode_manifest(&bytes).is_err());
     }
 
     #[test]
-    fn damaged_save_is_rejected_by_checksum() {
+    fn damaged_manifest_is_rejected_by_checksum() {
         let world = TerrainWorld::new(99, 0.25, 3.0);
-        let bytes = encode_save(&world, &[], &Inventory::default()).unwrap();
+        let bytes = encode_manifest(&world, &[], &Inventory::default()).unwrap();
         let mut damaged = bytes;
         damaged[12] ^= 0x01;
-        assert!(decode_save(&damaged).is_err());
+        assert!(decode_manifest(&damaged).is_err());
     }
 }
