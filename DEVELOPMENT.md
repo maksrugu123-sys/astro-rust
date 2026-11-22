@@ -155,3 +155,8 @@ No builds, tests, APK packaging, or device profiling have been run. Terrain, gre
 - Chunk-neighbor invalidation and DDA stepping use saturating coordinate arithmetic at integer limits.
 - Chunk coordinates restored from saves are restricted to ranges that can be represented by signed 32-bit voxel coordinates; invalid external chunk coordinates are ignored by the runtime loader.
 - Added boundary-focused tests. They have not been run; no build, APK, CI, or device validation was performed.
+
+
+### Placement and streaming ownership fix
+
+- Block placement now requires the target voxel to be present and empty in a loaded chunk. An unloaded target is no longer mistaken for air, so the input handler cannot synchronously generate a chunk that bypasses the streaming system's mesh/entity registration.
