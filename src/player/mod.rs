@@ -38,6 +38,32 @@ struct PlayerMotion {
 #[derive(Component)]
 struct JoystickThumb;
 
+/// Basic carried materials collected by mining solid resource blocks.
+#[derive(Resource, Default)]
+pub struct Inventory {
+    pub regolith: u16,
+    pub rock: u16,
+    pub copper: u16,
+    pub iron: u16,
+}
+
+impl Inventory {
+    fn collect(&mut self, kind: VoxelKind) {
+        let slot = match kind {
+            VoxelKind::Regolith => &mut self.regolith,
+            VoxelKind::Rock => &mut self.rock,
+            VoxelKind::CopperOre => &mut self.copper,
+            VoxelKind::IronOre => &mut self.iron,
+            VoxelKind::Air => return,
+        };
+        *slot = slot.saturating_add(1).min(99);
+    }
+}
+
+#[derive(Component)]
+struct InventoryHud;
+
+
 /// Normalized movement input, camera drag, and held jump state from touch.
 #[derive(Resource, Default)]
 pub struct TouchControls {
@@ -108,6 +134,21 @@ pub fn spawn_player(
 
 /// Draws the movement joystick and a separate jump touch target.
 pub fn spawn_touch_hud(mut commands: Commands) {
+    commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(16.0),
+            top: Val::Px(16.0),
+            padding: UiRect::all(Val::Px(10.0)),
+            ..default()
+        },
+        Text::new("REG 0   ROCK 0   CU 0   FE 0"),
+        TextFont { font_size: 16.0, ..default() },
+        TextColor(Color::WHITE),
+        InventoryHud,
+        Name::new("Inventory HUD"),
+    ));
+
     commands.spawn((
         Node {
             position_type: PositionType::Absolute,
@@ -214,6 +255,21 @@ pub fn spawn_touch_hud(mut commands: Commands) {
 
 /// Left touch zone moves; right touch zone rotates the camera. The lower-right
 /// jump target is excluded from camera drag, so movement, look, and jump coexist.
+pub fn update_inventory_hud(
+    inventory: Res<Inventory>,
+    mut query: Query<&mut Text, With<InventoryHud>>,
+) {
+    if !inventory.is_changed() {
+        return;
+    }
+    for mut text in &mut query {
+        *text = Text::new(format!(
+            "REG {}   ROCK {}   CU {}   FE {}",
+            inventory.regolith, inventory.rock, inventory.copper, inventory.iron
+        ));
+    }
+}
+
 pub fn read_touch_controls(
     touches: Res<Touches>,
     windows: Query<&Window, With<PrimaryWindow>>,
@@ -420,6 +476,7 @@ pub fn apply_terrain_actions(
     camera_query: Query<&Transform, (With<Camera3d>, Without<PlanetPlayer>)>,
     player_query: Query<&Transform, With<PlanetPlayer>>,
     mut terrain: ResMut<TerrainWorld>,
+    mut inventory: ResMut<Inventory>,
 ) {
     let mine = (controls.mine_pressed && !controls.mine_was_pressed)
         || keyboard.just_pressed(KeyCode::KeyE);
@@ -442,7 +499,11 @@ pub fn apply_terrain_actions(
     };
 
     if mine {
-        terrain.set_block(voxel, VoxelKind::Air);
+        if let Some(kind) = terrain.get_block(voxel) {
+            if kind.is_solid() && terrain.set_block(voxel, VoxelKind::Air) {
+                inventory.collect(kind);
+            }
+        }
     } else if place {
         let target = voxel + face_normal;
         let target_center = (target.as_vec3() + Vec3::splat(0.5)) * terrain.voxel_size;
