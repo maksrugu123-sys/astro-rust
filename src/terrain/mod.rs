@@ -1026,6 +1026,29 @@ mod tests {
     }
 
     #[test]
+    fn generated_voxels_are_not_counted_as_player_edits() {
+        let mut world = TerrainWorld::new(7, 0.25, 3.0);
+        let coord = ChunkCoord { x: 0, y: 0, z: 0 };
+        world.ensure_chunk(coord);
+        assert_eq!(world.edited_chunk_count(), 0);
+        assert!(world.export_edited_chunks().is_empty());
+    }
+
+    #[test]
+    fn one_voxel_change_produces_one_sparse_delta() {
+        let mut world = TerrainWorld::new(7, 0.25, 3.0);
+        let coord = ChunkCoord { x: 0, y: 0, z: 0 };
+        world.ensure_chunk(coord);
+        let position = IVec3::new(4, 4, 4);
+        let original = world.get_block(position).unwrap();
+        let changed = if original == VoxelKind::Air { VoxelKind::Rock } else { VoxelKind::Air };
+        assert!(world.set_block(position, changed));
+        let snapshot = world.export_edited_chunks();
+        assert_eq!(snapshot.len(), 1);
+        assert_eq!(snapshot[0].1.len(), 1);
+    }
+
+    #[test]
     fn digging_removes_voxels_and_marks_chunk_edited() {
         let mut world = TerrainWorld::new(7, 0.25, 3.0);
         let removed = world.dig_sphere(Vec3::new(0.0, 2.8, 0.0), 0.65);
