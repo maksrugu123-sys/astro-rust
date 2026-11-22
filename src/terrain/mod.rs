@@ -814,7 +814,7 @@ fn build_chunk_mesh(world: &TerrainWorld, coord: ChunkCoord) -> Mesh {
 
             for rect in greedy_face_rectangles(&mut mask) {
                 let mut local_base = [0.0_f32; 3];
-                local_base[axis] = (slice + i32::from(positive)) as f32;
+                local_base[axis] = (slice + if positive { 1 } else { 0 }) as f32;
                 local_base[u_axis] = rect.u as f32;
                 local_base[v_axis] = rect.v as f32;
                 let base = (origin + Vec3::from_array(local_base)) * world.voxel_size;
