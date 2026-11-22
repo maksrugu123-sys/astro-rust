@@ -2,23 +2,8 @@ use bevy::prelude::*;
 
 pub mod math;
 
-pub fn spawn_test_planet(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-) {
-    commands.spawn((
-        Mesh3d(meshes.add(Sphere::new(3.0).mesh().ico(5).expect("valid icosphere"))),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgb(0.12, 0.32, 0.48),
-            perceptual_roughness: 0.92,
-            metallic: 0.0,
-            ..default()
-        })),
-        Transform::IDENTITY,
-        Name::new("Prototype Planet"),
-    ));
-
+/// Spawns the sun light; the planet surface itself is rendered from voxel chunks.
+pub fn spawn_test_planet(mut commands: Commands) {
     commands.spawn((
         DirectionalLight {
             illuminance: 18_000.0,
@@ -31,5 +16,6 @@ pub fn spawn_test_planet(
             -0.5,
             0.0,
         )),
+        Name::new("Planet Key Light"),
     ));
 }
