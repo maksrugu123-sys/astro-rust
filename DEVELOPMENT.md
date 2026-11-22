@@ -34,7 +34,7 @@
 - [x] Stream a bounded 3×3×3 chunk neighborhood around the player.
 - [x] Budget chunk generation/mesh creation to at most two chunks per frame.
 - [x] Bound active chunk count and unload stale chunk visuals.
-- [ ] Persist edited chunks to durable app storage across process restarts.
+- [x] Persist edited chunks to a versioned, checksummed save in app-private storage (source implemented; runtime verification pending).
 - [ ] Move chunk generation and mesh building to background tasks.
 - [ ] Add a bounded durable edit-cache policy and device-aware memory budgets.
 - [ ] Add distance-based LOD and streaming priorities.
@@ -48,8 +48,8 @@
 - [ ] Modular base placement.
 
 ## Milestone 4 — Persistence and optimization
-- [ ] Versioned save/load with corruption handling.
-- [ ] Background lifecycle and interrupted-save recovery.
+- [x] Versioned save/load with checksum, strict bounds, and atomic temporary-file replacement (not runtime verified).
+- [ ] Background lifecycle save on Android suspend and interrupted-save recovery.
 - [ ] Performance and memory telemetry.
 - [ ] Profiling on real Android hardware before raising visual defaults.
 
@@ -78,3 +78,15 @@ No builds, tests, APK packaging, or device profiling have been run. Terrain unit
 - Chunk load/unload marks adjacent loaded chunk meshes dirty so exposed boundary faces are refreshed.
 - Added a unit test for edit restoration after unload/reload; it has not been executed.
 - This cache survives chunk unload/reload only while the app process remains alive. Durable save files, crash recovery, asynchronous workers, and a hard bound for the accumulated edit cache are still pending.
+
+
+## Latest persistence batch — durable edited terrain
+
+- Added a versioned binary world-save format containing the world seed, voxel scale, planet radius, and only player-edited chunks.
+- The file includes a format magic/version, FNV-1a 64-bit integrity checksum, duplicate-coordinate and voxel-kind validation, strict size limits, and rejection of truncated or trailing data.
+- Saves are written to a temporary file, flushed, then renamed over the previous save.
+- Android resolves the app-private internal files directory through Bevy's Android application handle; desktop iteration uses a project-local `saves/` directory.
+- Edited chunk data is loaded into the lazy runtime edit cache, so distant saved chunks do not all need to become active terrain meshes at startup.
+- Autosave runs every 15 seconds when the terrain edit revision has changed; an app-exit save is also registered.
+- Current limitation: Android suspend/process-kill recovery still needs a lifecycle hook, so the periodic autosave is the primary protection against abrupt termination. The in-memory edit cache can still grow with the number of edited chunks during a very long session; a disk-backed per-chunk cache is a future memory optimization.
+- Save codec unit tests were added but not run. No build, test, APK, CI, or device validation was performed.
