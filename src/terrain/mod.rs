@@ -801,6 +801,19 @@ mod tests {
     }
 
     #[test]
+    fn worker_generation_matches_synchronous_generation() {
+        let coord = ChunkCoord { x: -1, y: 0, z: 1 };
+        let worker_chunk = generate_chunk(coord, 1234, 0.25, 3.0);
+        let mut world = TerrainWorld::new(1234, 0.25, 3.0);
+        world.ensure_chunk(coord);
+        assert_eq!(
+            worker_chunk.blocks,
+            world.chunk(coord).unwrap().blocks
+        );
+        assert!(!worker_chunk.edited);
+    }
+
+    #[test]
     fn generated_chunks_are_deterministic_for_a_seed() {
         let mut first = TerrainWorld::new(42, 0.25, 3.0);
         let mut second = TerrainWorld::new(42, 0.25, 3.0);
