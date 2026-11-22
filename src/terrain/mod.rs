@@ -715,59 +715,124 @@ pub fn refresh_dirty_chunk_meshes(
     }
 }
 
+#[derive(Clone, Copy)]
+struct FaceRect {
+    u: i32,
+    v: i32,
+    width: i32,
+    height: i32,
+    kind: VoxelKind,
+}
+
+/// Greedily merges a 16x16 face mask into same-material rectangles.
+fn greedy_face_rectangles(mask: &mut [Option<VoxelKind>]) -> Vec<FaceRect> {
+    let mut rectangles = Vec::new();
+    for v in 0..CHUNK_SIZE {
+        for u in 0..CHUNK_SIZE {
+            let index = (v * CHUNK_SIZE + u) as usize;
+            let Some(kind) = mask[index] else {
+                continue;
+            };
+
+            let mut width = 1;
+            while u + width < CHUNK_SIZE
+                && mask[(v * CHUNK_SIZE + u + width) as usize] == Some(kind)
+            {
+                width += 1;
+            }
+
+            let mut height = 1;
+            'height: while v + height < CHUNK_SIZE {
+                for offset in 0..width {
+                    if mask[((v + height) * CHUNK_SIZE + u + offset) as usize] != Some(kind) {
+                        break 'height;
+                    }
+                }
+                height += 1;
+            }
+
+            for row in 0..height {
+                for column in 0..width {
+                    mask[((v + row) * CHUNK_SIZE + u + column) as usize] = None;
+                }
+            }
+            rectangles.push(FaceRect { u, v, width, height, kind });
+        }
+    }
+    rectangles
+}
+
+fn axis_vector(axis: usize) -> Vec3 {
+    match axis {
+        0 => Vec3::X,
+        1 => Vec3::Y,
+        _ => Vec3::Z,
+    }
+}
+
 fn build_chunk_mesh(world: &TerrainWorld, coord: ChunkCoord) -> Mesh {
     let mut positions: Vec<[f32; 3]> = Vec::new();
     let mut normals: Vec<[f32; 3]> = Vec::new();
     let mut colors: Vec<[f32; 4]> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
-    let origin = coord.origin();
+    let origin = coord.origin().as_vec3();
 
-    let faces: [(IVec3, [[i32; 3]; 4]); 6] = [
-        (IVec3::X, [[1, 0, 0], [1, 1, 0], [1, 1, 1], [1, 0, 1]]),
-        (IVec3::NEG_X, [[0, 0, 0], [0, 0, 1], [0, 1, 1], [0, 1, 0]]),
-        (IVec3::Y, [[0, 1, 0], [0, 1, 1], [1, 1, 1], [1, 1, 0]]),
-        (IVec3::NEG_Y, [[0, 0, 0], [1, 0, 0], [1, 0, 1], [0, 0, 1]]),
-        (IVec3::Z, [[0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]]),
-        (IVec3::NEG_Z, [[0, 0, 0], [0, 1, 0], [1, 1, 0], [1, 0, 0]]),
+    // (normal axis, u axis, v axis, positive-facing). The chosen u/v basis
+    // always has cross(u, v) equal to the face normal, preserving winding.
+    let directions = [
+        (0, 1, 2, true),  // +X
+        (0, 2, 1, false), // -X
+        (1, 2, 0, true),  // +Y
+        (1, 0, 2, false), // -Y
+        (2, 0, 1, true),  // +Z
+        (2, 1, 0, false), // -Z
     ];
 
-    for z in 0..CHUNK_SIZE {
-        for y in 0..CHUNK_SIZE {
-            for x in 0..CHUNK_SIZE {
-                let local = IVec3::new(x, y, z);
-                let voxel = origin + local;
-                let Some(kind) = world.get_block(voxel) else {
-                    continue;
-                };
-                if !kind.is_solid() {
-                    continue;
-                }
+    for (axis, u_axis, v_axis, positive) in directions {
+        let normal = axis_vector(axis) * if positive { 1.0 } else { -1.0 };
+        let u_vector = axis_vector(u_axis);
+        let v_vector = axis_vector(v_axis);
 
-                let color = match kind {
+        for slice in 0..CHUNK_SIZE {
+            let mut mask = vec![None; (CHUNK_SIZE * CHUNK_SIZE) as usize];
+            for v in 0..CHUNK_SIZE {
+                for u in 0..CHUNK_SIZE {
+                    let mut local = [0_i32; 3];
+                    local[axis] = slice;
+                    local[u_axis] = u;
+                    local[v_axis] = v;
+                    let voxel = IVec3::from_array(local) + coord.origin();
+                    let Some(kind) = world.get_block(voxel) else {
+                        continue;
+                    };
+                    if !kind.is_solid() || world.get_block(voxel + normal.as_ivec3()).is_some_and(VoxelKind::is_solid) {
+                        continue;
+                    }
+                    mask[(v * CHUNK_SIZE + u) as usize] = Some(kind);
+                }
+            }
+
+            for rect in greedy_face_rectangles(&mut mask) {
+                let mut local_base = [0.0_f32; 3];
+                local_base[axis] = (slice + i32::from(positive)) as f32;
+                local_base[u_axis] = rect.u as f32;
+                local_base[v_axis] = rect.v as f32;
+                let base = (origin + Vec3::from_array(local_base)) * world.voxel_size;
+                let u_offset = u_vector * (rect.width as f32 * world.voxel_size);
+                let v_offset = v_vector * (rect.height as f32 * world.voxel_size);
+                let corners = [base, base + u_offset, base + u_offset + v_offset, base + v_offset];
+                let color = match rect.kind {
                     VoxelKind::Regolith => [0.66, 0.48, 0.30, 1.0],
                     VoxelKind::Rock => [0.31, 0.34, 0.38, 1.0],
                     VoxelKind::Air => [0.0, 0.0, 0.0, 0.0],
                 };
-
-                for (normal, corners) in faces {
-                    let neighbor = voxel + normal;
-                    if world.get_block(neighbor).is_some_and(VoxelKind::is_solid) {
-                        continue;
-                    }
-
-                    let base = positions.len() as u32;
-                    for corner in corners {
-                        let point = (voxel.as_vec3() + Vec3::from_array([
-                            corner[0] as f32,
-                            corner[1] as f32,
-                            corner[2] as f32,
-                        ])) * world.voxel_size;
-                        positions.push(point.to_array());
-                        normals.push(normal.as_vec3().to_array());
-                        colors.push(color);
-                    }
-                    indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                let first = positions.len() as u32;
+                for point in corners {
+                    positions.push(point.to_array());
+                    normals.push(normal.to_array());
+                    colors.push(color);
                 }
+                indices.extend_from_slice(&[first, first + 1, first + 2, first, first + 2, first + 3]);
             }
         }
     }
@@ -785,6 +850,29 @@ fn build_chunk_mesh(world: &TerrainWorld, coord: ChunkCoord) -> Mesh {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn greedy_meshing_merges_uniform_face_regions() {
+        let mut mask = vec![None; (CHUNK_SIZE * CHUNK_SIZE) as usize];
+        for v in 3..5 {
+            for u in 7..9 {
+                mask[(v * CHUNK_SIZE + u) as usize] = Some(VoxelKind::Regolith);
+            }
+        }
+        let rectangles = greedy_face_rectangles(&mut mask);
+        assert_eq!(rectangles.len(), 1);
+        assert_eq!(rectangles[0].width, 2);
+        assert_eq!(rectangles[0].height, 2);
+    }
+
+    #[test]
+    fn greedy_meshing_does_not_merge_different_materials() {
+        let mut mask = vec![None; (CHUNK_SIZE * CHUNK_SIZE) as usize];
+        mask[0] = Some(VoxelKind::Regolith);
+        mask[1] = Some(VoxelKind::Rock);
+        let rectangles = greedy_face_rectangles(&mut mask);
+        assert_eq!(rectangles.len(), 2);
+    }
 
     #[test]
     fn negative_voxel_coordinates_map_to_negative_chunks() {
