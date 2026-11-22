@@ -3,7 +3,7 @@ use std::{
     collections::HashSet,
     fs::{self, File},
     io::{Read, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 use bevy::prelude::*;
@@ -13,15 +13,17 @@ use crate::{
     terrain::{ChunkCoord, TerrainWorld, VoxelKind},
 };
 
-const SAVE_FILE: &str = "world.astrosave";
-const TEMP_FILE: &str = "world.astrosave.tmp";
-const MAGIC: &[u8; 8] = b"ASTRSAV1";
-const FORMAT_VERSION: u32 = 4;
+const MANIFEST_FILE: &str = "world.manifest";
+const CHUNK_DIRECTORY: &str = "chunks";
+const MANIFEST_TEMP: &str = "world.manifest.tmp";
+const MAGIC: &[u8; 8] = b"ASTRMNF1";
+const CHUNK_MAGIC: &[u8; 8] = b"ASTRCHK1";
+const FORMAT_VERSION: u32 = 5;
+const CHUNK_FORMAT_VERSION: u32 = 1;
 const CHUNK_BLOCKS: usize = 16 * 16 * 16;
 const MAX_SAVED_CHUNKS: usize = 8_192;
-const MAX_CHUNK_EDIT_BYTES: usize = 2 + CHUNK_BLOCKS * 3;
-const MAX_SAVE_BYTES: u64 =
-    (40 + MAX_SAVED_CHUNKS * (12 + MAX_CHUNK_EDIT_BYTES) + 8) as u64;
+const MAX_CHUNK_FILE_BYTES: u64 = (8 + 4 + 12 + 2 + CHUNK_BLOCKS * 3 + 8) as u64;
+const MAX_MANIFEST_BYTES: u64 = (8 + 4 + 8 + 4 + 4 + 8 + 4 + MAX_SAVED_CHUNKS * 12 + 8) as u64;
 const AUTOSAVE_SECONDS: f32 = 15.0;
 
 #[derive(Resource)]
@@ -58,26 +60,71 @@ impl SaveStore {
         }
     }
 
-    fn save_path(&self) -> Option<PathBuf> {
-        self.directory.as_ref().map(|dir| dir.join(SAVE_FILE))
+    fn manifest_path(&self) -> Option<PathBuf> {
+        self.directory.as_ref().map(|dir| dir.join(MANIFEST_FILE))
+    }
+
+    fn chunk_directory(&self) -> Option<PathBuf> {
+        self.directory.as_ref().map(|dir| dir.join(CHUNK_DIRECTORY))
+    }
+
+    fn chunk_path(directory: &Path, coord: ChunkCoord) -> PathBuf {
+        directory.join(format!("{}_{}_{}.chunk", coord.x, coord.y, coord.z))
     }
 
     fn load(&self) -> Result<Option<SavedWorld>, String> {
-        let Some(path) = self.save_path() else {
+        let Some(manifest_path) = self.manifest_path() else {
             return Err("No writable application data directory is available".into());
         };
-        if !path.exists() {
+        if !manifest_path.exists() {
             return Ok(None);
         }
-        let metadata = fs::metadata(&path).map_err(|e| format!("Cannot inspect save: {e}"))?;
-        if metadata.len() > MAX_SAVE_BYTES {
-            return Err("Save file exceeds the supported size limit".into());
+        let manifest_metadata = fs::metadata(&manifest_path)
+            .map_err(|e| format!("Cannot inspect world manifest: {e}"))?;
+        if manifest_metadata.len() > MAX_MANIFEST_BYTES {
+            return Err("World manifest exceeds the supported size limit".into());
         }
-        let mut bytes = Vec::with_capacity(metadata.len() as usize);
-        File::open(path)
-            .and_then(|mut file| file.read_to_end(&mut bytes))
-            .map_err(|e| format!("Cannot read save: {e}"))?;
-        decode_save(&bytes).map(Some)
+        let mut manifest_bytes = Vec::with_capacity(manifest_metadata.len() as usize);
+        File::open(&manifest_path)
+            .and_then(|mut file| file.read_to_end(&mut manifest_bytes))
+            .map_err(|e| format!("Cannot read world manifest: {e}"))?;
+        let manifest = decode_manifest(&manifest_bytes)?;
+        let chunk_directory = self.chunk_directory()
+            .ok_or("No writable chunk directory is available")?;
+        let mut chunks = Vec::with_capacity(manifest.chunk_coords.len());
+        let mut damaged = 0usize;
+        for coord in manifest.chunk_coords {
+            let path = Self::chunk_path(&chunk_directory, coord);
+            let loaded = (|| -> Result<Vec<(u16, VoxelKind)>, String> {
+                let metadata = fs::metadata(&path)
+                    .map_err(|e| format!("Cannot inspect chunk file: {e}"))?;
+                if metadata.len() > MAX_CHUNK_FILE_BYTES {
+                    return Err("Chunk file exceeds the supported size limit".into());
+                }
+                let mut bytes = Vec::with_capacity(metadata.len() as usize);
+                File::open(&path)
+                    .and_then(|mut file| file.read_to_end(&mut bytes))
+                    .map_err(|e| format!("Cannot read chunk file: {e}"))?;
+                decode_chunk(&bytes, coord)
+            })();
+            match loaded {
+                Ok(edits) => chunks.push((coord, edits)),
+                Err(error) => {
+                    damaged += 1;
+                    warn!("Skipping damaged ASTRO-RUST chunk {},{},{}: {error}", coord.x, coord.y, coord.z);
+                }
+            }
+        }
+        if damaged > 0 {
+            warn!("Loaded world with {damaged} damaged or missing chunk file(s); unaffected chunks were preserved");
+        }
+        Ok(Some(SavedWorld {
+            seed: manifest.seed,
+            voxel_size: manifest.voxel_size,
+            base_radius: manifest.base_radius,
+            chunks,
+            inventory: manifest.inventory,
+        }))
     }
 
     fn save(&self, terrain: &TerrainWorld, inventory: &Inventory) -> Result<(), String> {
@@ -92,18 +139,38 @@ impl SaveStore {
             ));
         }
         let chunks = terrain.export_edited_chunks();
-        let bytes = encode_save(terrain, &chunks, inventory)?;
-        fs::create_dir_all(directory)
-            .map_err(|e| format!("Cannot create save directory: {e}"))?;
-        let temp_path = directory.join(TEMP_FILE);
-        let save_path = directory.join(SAVE_FILE);
-        let mut file = File::create(&temp_path)
-            .map_err(|e| format!("Cannot create temporary save: {e}"))?;
-        file.write_all(&bytes)
-            .and_then(|_| file.sync_all())
-            .map_err(|e| format!("Cannot flush temporary save: {e}"))?;
-        fs::rename(&temp_path, &save_path)
-            .map_err(|e| format!("Cannot atomically replace save: {e}"))?;
+        let manifest = encode_manifest(terrain, &chunks, inventory)?;
+        let chunk_directory = directory.join(CHUNK_DIRECTORY);
+        fs::create_dir_all(&chunk_directory)
+            .map_err(|e| format!("Cannot create chunk directory: {e}"))?;
+
+        let mut retained = HashSet::with_capacity(chunks.len());
+        for (coord, edits) in &chunks {
+            let filename = format!("{}_{}_{}.chunk", coord.x, coord.y, coord.z);
+            retained.insert(filename);
+            let bytes = encode_chunk(*coord, edits)?;
+            let path = Self::chunk_path(&chunk_directory, *coord);
+            let temp_path = path.with_extension("chunk.tmp");
+            write_atomic(&temp_path, &path, &bytes)
+                .map_err(|e| format!("Cannot persist chunk {},{},{}: {e}", coord.x, coord.y, coord.z))?;
+        }
+
+        let manifest_path = directory.join(MANIFEST_FILE);
+        let temp_manifest = directory.join(MANIFEST_TEMP);
+        write_atomic(&temp_manifest, &manifest_path, &manifest)
+            .map_err(|e| format!("Cannot commit world manifest: {e}"))?;
+
+        // The manifest is the commit point. Orphaned files are safe to remove
+        // only after it has been replaced successfully.
+        for entry in fs::read_dir(&chunk_directory)
+            .map_err(|e| format!("Cannot inspect chunk directory: {e}"))?
+        {
+            let entry = entry.map_err(|e| format!("Cannot inspect chunk entry: {e}"))?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.ends_with(".chunk") && !retained.contains(&name) {
+                let _ = fs::remove_file(entry.path());
+            }
+        }
         Ok(())
     }
 }
