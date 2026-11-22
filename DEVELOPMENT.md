@@ -168,3 +168,10 @@ No builds, tests, APK packaging, or device profiling have been run. Terrain, gre
 - Save size metadata is compared as u64 before conversion to usize.
 - The edited-chunk count is checked against the save cap before full chunk arrays are cloned into the save snapshot, avoiding a large unnecessary allocation when a world already exceeds the supported save limit.
 - Save encoding also rejects invalid chunk coordinates and inventory stacks above the supported 99-item cap.
+
+
+### Worker failure recovery
+
+- Chunk-generation threads now use named fallible thread creation instead of an infallible spawn call.
+- A worker panic is caught at the generation boundary; failed jobs release their pending coordinate so the streaming scheduler can retry rather than permanently stalling that chunk.
+- These paths are source-level hardening only and have not been exercised by runtime tests.
