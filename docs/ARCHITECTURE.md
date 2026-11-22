@@ -22,7 +22,7 @@ Terrain storage is divided into 16×16×16 voxel chunks. Integer world-voxel coo
 
 Each loaded chunk is converted to a custom triangle mesh containing only faces adjacent to air or unloaded space. Per-vertex colors distinguish regolith from rock. The old smooth placeholder sphere has been removed; the voxel chunk meshes are now the planet's visible surface. Dirty chunks can be rebuilt after block edits without rebuilding every chunk.
 
-The initial chunk meshes are built synchronously during startup. Streaming is bounded by active chunk count and per-frame load/unload budgets, but generation and mesh building still run on the main thread. Asynchronous workers, distance-based LOD, and durable save files remain pending. Radial player contact now uses the voxel surface height, so hills, edits, and radial holes can affect support height. This approximation does not yet resolve side walls, overhangs, caves, or arbitrary capsule/voxel intersections.
+The initial eight chunks and their meshes are built synchronously during startup. Subsequent streamed chunks use a bounded worker queue: worker threads generate pure CPU-side voxel arrays, while the main thread applies edits, builds render meshes, and creates entities under a per-frame budget. At most four chunk jobs are pending, and at most two are requested and applied per frame. Mesh generation remains on the main thread; distance-based LOD remains pending. Radial player contact now uses the voxel surface height, so hills, edits, and radial holes can affect support height. This approximation does not yet resolve side walls, overhangs, caves, or arbitrary capsule/voxel intersections.
 
 ## Planned subsystem boundaries
 
@@ -67,3 +67,8 @@ The save subsystem stores the world seed and terrain parameters plus complete vo
 The binary format has a magic header, explicit format version, fixed little-endian fields, a 64-bit FNV-1a integrity checksum, strict chunk-count and voxel-kind validation, and exact-length validation. Writes go to a temporary file, are flushed with `sync_all`, then renamed into place. Android resolves the app-private internal files directory from Bevy's Android application handle; desktop development uses `./saves/`.
 
 Autosave checks the terrain edit revision every 15 seconds and writes only when edits have changed. A final save is also registered for Bevy app exit, and the `WillSuspend` lifecycle message triggers a save on the last active frame before the app is backgrounded. A forced process kill that bypasses lifecycle delivery can still lose edits made since the last successful save. The runtime edit cache is still process memory and currently has no disk-backed eviction policy.
+
+
+## Asynchronous chunk generation
+
+Procedural chunk generation is isolated from Bevy resources and can run on worker threads. A bounded queue limits in-flight jobs, prioritizes chunks by distance from the player with stable coordinate tie-breakers, and drops results that are no longer in the desired neighborhood. The main thread remains responsible for edit-cache overlay, mesh creation, and ECS entity changes. This separation avoids touching renderer assets from workers and preserves a clear ownership boundary. The first eight startup chunks remain synchronous for the initial scene.
