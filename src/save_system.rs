@@ -283,25 +283,35 @@ pub fn save_world_on_exit(
     }
 }
 
-fn encode_save(
+struct ManifestData {
+    seed: u64,
+    voxel_size: f32,
+    base_radius: f32,
+    inventory: [u16; 4],
+    chunk_coords: Vec<ChunkCoord>,
+}
+
+fn validate_inventory(inventory: &Inventory) -> Result<(), String> {
+    if inventory.regolith > 99 || inventory.rock > 99
+        || inventory.copper > 99 || inventory.iron > 99
+    {
+        return Err("Inventory contains a stack above its supported capacity".into());
+    }
+    Ok(())
+}
+
+fn encode_manifest(
     terrain: &TerrainWorld,
     chunks: &[(ChunkCoord, Vec<(u16, VoxelKind)>)],
     inventory: &Inventory,
 ) -> Result<Vec<u8>, String> {
-    if inventory.regolith > 99
-        || inventory.rock > 99
-        || inventory.copper > 99
-        || inventory.iron > 99
-    {
-        return Err("Inventory contains a stack above its supported capacity".into());
-    }
+    validate_inventory(inventory)?;
     if chunks.len() > MAX_SAVED_CHUNKS {
         return Err("Save contains too many edited chunks".into());
     }
-
-    let mut ordered: Vec<_> = chunks.iter().collect();
-    ordered.sort_by_key(|(coord, _)| (coord.x, coord.y, coord.z));
-    let mut bytes = Vec::with_capacity(40 + chunks.len() * 32 + 8);
+    let mut ordered: Vec<_> = chunks.iter().map(|(coord, _)| *coord).collect();
+    ordered.sort_by_key(|coord| (coord.x, coord.y, coord.z));
+    let mut bytes = Vec::with_capacity(40 + ordered.len() * 12 + 8);
     bytes.extend_from_slice(MAGIC);
     push_u32(&mut bytes, FORMAT_VERSION);
     push_u64(&mut bytes, terrain.seed);
@@ -311,71 +321,66 @@ fn encode_save(
     push_u16(&mut bytes, inventory.rock);
     push_u16(&mut bytes, inventory.copper);
     push_u16(&mut bytes, inventory.iron);
-    push_u32(&mut bytes, chunks.len() as u32);
-
-    let mut unique = HashSet::with_capacity(chunks.len());
-    for (coord, edits) in ordered {
-        if !coord.is_representable()
-            || edits.is_empty()
-            || edits.len() > CHUNK_BLOCKS
-            || !unique.insert(*coord)
-        {
-            return Err("Invalid or duplicate edited chunk in save snapshot".into());
+    push_u32(&mut bytes, ordered.len() as u32);
+    let mut unique = HashSet::with_capacity(ordered.len());
+    for coord in ordered {
+        if !coord.is_representable() || !unique.insert(coord) {
+            return Err("Manifest contains an invalid or duplicate chunk coordinate".into());
         }
-        let mut sorted_edits = edits.clone();
-        sorted_edits.sort_by_key(|(index, _)| *index);
-        if sorted_edits.windows(2).any(|pair| pair[0].0 == pair[1].0) {
-            return Err("Save chunk contains duplicate voxel indices".into());
-        }
-
         push_i32(&mut bytes, coord.x);
         push_i32(&mut bytes, coord.y);
         push_i32(&mut bytes, coord.z);
-        push_u16(&mut bytes, sorted_edits.len() as u16);
-        for (index, kind) in sorted_edits {
-            if index as usize >= CHUNK_BLOCKS {
-                return Err("Save chunk contains an invalid voxel index".into());
-            }
-            bytes.extend_from_slice(&index.to_le_bytes());
-            bytes.push(kind as u8);
-        }
     }
-
     let checksum = checksum64(&bytes);
     push_u64(&mut bytes, checksum);
-    if bytes.len() as u64 > MAX_SAVE_BYTES {
-        return Err("Encoded save exceeds the supported size limit".into());
+    if bytes.len() as u64 > MAX_MANIFEST_BYTES {
+        return Err("Encoded manifest exceeds the supported size limit".into());
     }
     Ok(bytes)
 }
 
-fn decode_voxel(value: u8) -> Result<VoxelKind, String> {
-    match value {
-        0 => Ok(VoxelKind::Air),
-        1 => Ok(VoxelKind::Regolith),
-        2 => Ok(VoxelKind::Rock),
-        3 => Ok(VoxelKind::CopperOre),
-        4 => Ok(VoxelKind::IronOre),
-        _ => Err("Save contains an unknown voxel kind".into()),
+fn encode_chunk(coord: ChunkCoord, edits: &[(u16, VoxelKind)]) -> Result<Vec<u8>, String> {
+    if !coord.is_representable() || edits.is_empty() || edits.len() > CHUNK_BLOCKS {
+        return Err("Chunk record metadata is outside supported bounds".into());
     }
+    let mut sorted = edits.to_vec();
+    sorted.sort_by_key(|(index, _)| *index);
+    if sorted.iter().any(|(index, _)| *index as usize >= CHUNK_BLOCKS)
+        || sorted.windows(2).any(|pair| pair[0].0 == pair[1].0)
+    {
+        return Err("Chunk record contains invalid or duplicate voxel indices".into());
+    }
+    let mut bytes = Vec::with_capacity(26 + sorted.len() * 3);
+    bytes.extend_from_slice(CHUNK_MAGIC);
+    push_u32(&mut bytes, CHUNK_FORMAT_VERSION);
+    push_i32(&mut bytes, coord.x);
+    push_i32(&mut bytes, coord.y);
+    push_i32(&mut bytes, coord.z);
+    push_u16(&mut bytes, sorted.len() as u16);
+    for (index, kind) in sorted {
+        bytes.extend_from_slice(&index.to_le_bytes());
+        bytes.push(kind as u8);
+    }
+    let checksum = checksum64(&bytes);
+    push_u64(&mut bytes, checksum);
+    if bytes.len() as u64 > MAX_CHUNK_FILE_BYTES {
+        return Err("Encoded chunk exceeds the supported size limit".into());
+    }
+    Ok(bytes)
 }
 
-fn decode_save(bytes: &[u8]) -> Result<SavedWorld, String> {
-    if bytes.len() < 40 || &bytes[..8] != MAGIC {
-        return Err("Save header is missing or invalid".into());
+fn decode_manifest(bytes: &[u8]) -> Result<ManifestData, String> {
+    if bytes.len() < 44 || &bytes[..8] != MAGIC {
+        return Err("World manifest header is missing or invalid".into());
     }
     let payload_end = bytes.len() - 8;
-    let stored_checksum = read_u64(bytes, payload_end)?;
-    if checksum64(&bytes[..payload_end]) != stored_checksum {
-        return Err("Save checksum mismatch; file may be damaged".into());
+    if checksum64(&bytes[..payload_end]) != read_u64(bytes, payload_end)? {
+        return Err("World manifest checksum mismatch".into());
     }
-
     let mut cursor = 8;
     let version = take_u32(bytes, &mut cursor)?;
     if version != FORMAT_VERSION {
-        return Err(format!(
-            "Unsupported save format version: {version}; this build requires v{FORMAT_VERSION}"
-        ));
+        return Err(format!("Unsupported save format version: {version}; this build requires v{FORMAT_VERSION}"));
     }
     let seed = take_u64(bytes, &mut cursor)?;
     let voxel_size = f32::from_bits(take_u32(bytes, &mut cursor)?);
@@ -387,20 +392,19 @@ fn decode_save(bytes: &[u8]) -> Result<SavedWorld, String> {
         take_u16(bytes, &mut cursor)?,
     ];
     let count = take_u32(bytes, &mut cursor)? as usize;
-    if !voxel_size.is_finite()
-        || voxel_size <= 0.0
-        || !base_radius.is_finite()
-        || base_radius <= 0.0
+    if !voxel_size.is_finite() || voxel_size <= 0.0
+        || !base_radius.is_finite() || base_radius <= 0.0
+        || inventory.iter().any(|count| *count > 99)
         || count > MAX_SAVED_CHUNKS
     {
-        return Err("Save metadata is outside supported bounds".into());
+        return Err("World manifest metadata is outside supported bounds".into());
     }
-
-    if cursor > payload_end {
-        return Err("Save header is truncated".into());
+    let expected = cursor.checked_add(count.checked_mul(12).ok_or("Manifest size overflow")?)
+        .ok_or("Manifest size overflow")?;
+    if expected != payload_end {
+        return Err("World manifest length does not match its chunk index".into());
     }
-
-    let mut chunks = Vec::with_capacity(count);
+    let mut chunk_coords = Vec::with_capacity(count);
     let mut unique = HashSet::with_capacity(count);
     for _ in 0..count {
         let coord = ChunkCoord {
@@ -408,40 +412,79 @@ fn decode_save(bytes: &[u8]) -> Result<SavedWorld, String> {
             y: take_i32(bytes, &mut cursor)?,
             z: take_i32(bytes, &mut cursor)?,
         };
-        if !coord.is_representable() {
-            return Err("Save contains a chunk coordinate outside the voxel range".into());
+        if !coord.is_representable() || !unique.insert(coord) {
+            return Err("World manifest contains an invalid or duplicate chunk coordinate".into());
         }
-        if !unique.insert(coord) {
-            return Err("Save contains a duplicate chunk coordinate".into());
-        }
+        chunk_coords.push(coord);
+    }
+    Ok(ManifestData { seed, voxel_size, base_radius, inventory, chunk_coords })
+}
 
-        let edit_count = take_u16(bytes, &mut cursor)? as usize;
-        if edit_count == 0 || edit_count > CHUNK_BLOCKS {
-            return Err("Save chunk edit count is outside supported bounds".into());
-        }
-        let mut edits = Vec::with_capacity(edit_count);
-        let mut indices = HashSet::with_capacity(edit_count);
-        for _ in 0..edit_count {
-            let index = take_u16(bytes, &mut cursor)?;
-            if index as usize >= CHUNK_BLOCKS || !indices.insert(index) {
-                return Err("Save chunk contains an invalid or duplicate voxel index".into());
-            }
-            let kind = decode_voxel(*bytes.get(cursor).ok_or("Save chunk is truncated")?)?;
-            cursor += 1;
-            edits.push((index, kind));
-        }
-        chunks.push((coord, edits));
+fn decode_chunk(bytes: &[u8], expected_coord: ChunkCoord) -> Result<Vec<(u16, VoxelKind)>, String> {
+    if bytes.len() < 34 || bytes.len() as u64 > MAX_CHUNK_FILE_BYTES
+        || &bytes[..8] != CHUNK_MAGIC
+    {
+        return Err("Chunk file header is missing or invalid".into());
     }
-    if cursor != payload_end {
-        return Err("Save contains unexpected trailing data".into());
+    let payload_end = bytes.len() - 8;
+    if checksum64(&bytes[..payload_end]) != read_u64(bytes, payload_end)? {
+        return Err("Chunk checksum mismatch".into());
     }
-    Ok(SavedWorld {
-        seed,
-        voxel_size,
-        base_radius,
-        chunks,
-        inventory,
-    })
+    let mut cursor = 8;
+    let version = take_u32(bytes, &mut cursor)?;
+    if version != CHUNK_FORMAT_VERSION {
+        return Err(format!("Unsupported chunk file version: {version}"));
+    }
+    let coord = ChunkCoord {
+        x: take_i32(bytes, &mut cursor)?,
+        y: take_i32(bytes, &mut cursor)?,
+        z: take_i32(bytes, &mut cursor)?,
+    };
+    if coord != expected_coord || !coord.is_representable() {
+        return Err("Chunk file coordinate does not match its manifest entry".into());
+    }
+    let edit_count = take_u16(bytes, &mut cursor)? as usize;
+    if edit_count == 0 || edit_count > CHUNK_BLOCKS {
+        return Err("Chunk edit count is outside supported bounds".into());
+    }
+    let expected_end = cursor.checked_add(edit_count.checked_mul(3).ok_or("Chunk size overflow")?)
+        .ok_or("Chunk size overflow")?;
+    if expected_end != payload_end {
+        return Err("Chunk file length does not match its edit count".into());
+    }
+    let mut edits = Vec::with_capacity(edit_count);
+    let mut indices = HashSet::with_capacity(edit_count);
+    for _ in 0..edit_count {
+        let index = take_u16(bytes, &mut cursor)?;
+        if index as usize >= CHUNK_BLOCKS || !indices.insert(index) {
+            return Err("Chunk contains an invalid or duplicate voxel index".into());
+        }
+        let kind = decode_voxel(*bytes.get(cursor).ok_or("Chunk file is truncated")?)?;
+        cursor += 1;
+        edits.push((index, kind));
+    }
+    Ok(edits)
+}
+
+fn write_atomic(temp_path: &Path, final_path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let mut file = File::create(temp_path).map_err(|e| format!("Cannot create temporary file: {e}"))?;
+    file.write_all(bytes)
+        .and_then(|_| file.sync_all())
+        .map_err(|e| format!("Cannot flush temporary file: {e}"))?;
+    fs::rename(temp_path, final_path)
+        .map_err(|e| format!("Cannot atomically replace file: {e}"))?;
+    Ok(())
+}
+
+fn decode_voxel(value: u8) -> Result<VoxelKind, String> {
+    match value {
+        0 => Ok(VoxelKind::Air),
+        1 => Ok(VoxelKind::Regolith),
+        2 => Ok(VoxelKind::Rock),
+        3 => Ok(VoxelKind::CopperOre),
+        4 => Ok(VoxelKind::IronOre),
+        _ => Err("Save contains an unknown voxel kind".into()),
+    }
 }
 
 fn checksum64(bytes: &[u8]) -> u64 {
