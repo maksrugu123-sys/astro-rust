@@ -1085,6 +1085,37 @@ mod tests {
     }
 
     #[test]
+    fn saved_chunk_stays_blocked_until_validated_edits_are_cached() {
+        let mut world = TerrainWorld::new(7, 0.25, 3.0);
+        let coord = ChunkCoord { x: 0, y: 0, z: 0 };
+        world.restore_saved_world_index(7, 0.25, 3.0, [coord]);
+        world.ensure_chunk(coord);
+        assert!(!world.contains_chunk(coord));
+        assert!(world.is_chunk_disk_pending(coord));
+
+        world.cache_saved_chunk_edits(coord, vec![(4 * 16 + 4 * 16 * 16 + 4, VoxelKind::Air)]);
+        assert!(!world.is_chunk_disk_pending(coord));
+        world.ensure_chunk(coord);
+        assert!(world.contains_chunk(coord));
+    }
+
+    #[test]
+    fn reverting_saved_edits_leaves_a_persistent_manifest_tombstone() {
+        let mut world = TerrainWorld::new(7, 0.25, 3.0);
+        let coord = ChunkCoord { x: 0, y: 0, z: 0 };
+        world.ensure_chunk(coord);
+        let voxel = IVec3::new(4, 4, 4);
+        let original = world.get_block(voxel).unwrap();
+        let changed = if original == VoxelKind::Air { VoxelKind::Rock } else { VoxelKind::Air };
+        assert!(world.set_block(voxel, changed));
+        assert!(world.set_block(voxel, original));
+        assert!(!world.is_chunk_edited(coord));
+        assert!(world.cleared_chunk_coords().any(|saved| saved == coord));
+        assert!(world.unload_chunk(coord));
+        assert!(world.cleared_chunk_coords().any(|saved| saved == coord));
+    }
+
+    #[test]
     fn digging_removes_voxels_and_marks_chunk_edited() {
         let mut world = TerrainWorld::new(7, 0.25, 3.0);
         let removed = world.dig_sphere(Vec3::new(0.0, 2.8, 0.0), 0.65);
