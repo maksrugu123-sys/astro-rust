@@ -30,9 +30,13 @@
 - [x] Replace the smooth placeholder planet mesh with voxel chunk visuals.
 - [x] Add per-chunk dirty flags and targeted mesh rebuild support.
 - [x] Connect player grounding and movement to voxel terrain collision.
-- [ ] Add deterministic terrain edits with persistence across unload/reload.
-- [ ] Generate chunks and meshes asynchronously.
-- [ ] Add chunk cache limits and memory budgets.
+- [x] Preserve deterministic terrain edits across chunk unload/reload in the runtime edit cache.
+- [x] Stream a bounded 3×3×3 chunk neighborhood around the player.
+- [x] Budget chunk generation/mesh creation to at most two chunks per frame.
+- [x] Bound active chunk count and unload stale chunk visuals.
+- [ ] Persist edited chunks to durable app storage across process restarts.
+- [ ] Move chunk generation and mesh building to background tasks.
+- [ ] Add a bounded durable edit-cache policy and device-aware memory budgets.
 - [ ] Add distance-based LOD and streaming priorities.
 - [x] Add voxel ray queries for mining and block placement.
 - [x] Add touch HUD actions for MINE and PLACE, plus desktop E/Q controls.
@@ -63,3 +67,14 @@ No builds, tests, APK packaging, or device profiling have been run. Terrain unit
 - Added mobile MINE and PLACE touch targets. Desktop iteration uses E to mine and Q to place; the existing jump control remains separate.
 - Terrain edits flow through existing dirty-chunk invalidation and mesh refresh.
 - Known limits: contact is radial rather than a full capsule-vs-voxel solver; chunk streaming is not yet present, so interaction is limited to loaded chunks.
+
+## Latest streaming batch — bounded terrain neighborhood
+
+- Added a player-centered 3×3×3 desired chunk neighborhood.
+- At most two missing chunks are generated and meshed per frame; at most four stale chunk visuals are unloaded per frame.
+- Active loaded terrain chunks are capped at 40 for this prototype.
+- A shared terrain material is reused by all streamed chunk entities.
+- Modified chunk block arrays are retained in an in-memory edit cache when unloaded and reapplied after deterministic regeneration.
+- Chunk load/unload marks adjacent loaded chunk meshes dirty so exposed boundary faces are refreshed.
+- Added a unit test for edit restoration after unload/reload; it has not been executed.
+- This cache survives chunk unload/reload only while the app process remains alive. Durable save files, crash recovery, asynchronous workers, and a hard bound for the accumulated edit cache are still pending.
