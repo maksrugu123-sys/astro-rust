@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 
+mod chunk_io;
 mod planet;
 mod player;
 mod save_system;
@@ -27,6 +28,7 @@ pub fn run_app() {
     .init_resource::<player::Inventory>()
     .init_resource::<terrain::TerrainWorld>()
     .init_resource::<terrain::TerrainGenerationQueue>()
+    .init_resource::<chunk_io::ChunkIoQueue>()
     .insert_resource(save_system::SaveStore::discover())
     .add_systems(
         Startup,
