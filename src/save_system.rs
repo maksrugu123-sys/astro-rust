@@ -664,6 +664,40 @@ mod tests {
     }
 
     #[test]
+    fn startup_loads_manifest_index_without_opening_chunk_payloads() {
+        let root = std::env::temp_dir().join(format!(
+            "astro-rust-lazy-index-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+
+        let world = TerrainWorld::new(123, 0.25, 3.0);
+        let coord = ChunkCoord { x: 4, y: -2, z: 1 };
+        let records = HashMap::from([(coord, 0x1234_5678_u64)]);
+        let manifest = encode_manifest_records(&world, &records, &Inventory::default()).unwrap();
+        fs::write(root.join(MANIFEST_FILE), manifest).unwrap();
+
+        let store = SaveStore {
+            directory: Some(root.clone()),
+            last_saved_revision: None,
+            last_saved_inventory: None,
+            timer: Timer::from_seconds(AUTOSAVE_SECONDS, TimerMode::Repeating),
+            catalog: HashMap::new(),
+            loaded_records: HashSet::new(),
+            failed_reads: HashSet::new(),
+            load_failed: false,
+        };
+        let loaded = store.load().unwrap().unwrap();
+        assert_eq!(loaded.chunk_records, records);
+        assert!(!root.join(CHUNK_DIRECTORY).join(
+            SaveStore::chunk_filename(coord, records[&coord])
+        ).exists());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn manifest_rejects_old_save_versions() {
         for version in 1..FORMAT_VERSION {
             let mut bytes = Vec::new();
