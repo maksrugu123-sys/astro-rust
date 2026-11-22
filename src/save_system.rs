@@ -152,7 +152,7 @@ pub fn save_world_on_suspend(
 ) {
     let should_save = lifecycle
         .read()
-        .any(|state| *state == bevy::window::AppLifecycle::WillSuspend);
+        .any(|state| matches!(state, bevy::window::AppLifecycle::WillSuspend));
     if !should_save || store.last_saved_revision == Some(terrain.edit_revision()) {
         return;
     }
@@ -305,14 +305,14 @@ fn push_i32(out: &mut Vec<u8>, value: i32) {
     out.extend_from_slice(&value.to_le_bytes());
 }
 fn take_u32(bytes: &[u8], cursor: &mut usize) -> Result<u32, String> {
-    let end = cursor.checked_add(4).ok_or("Save offset overflow")?;
+    let end = (*cursor).checked_add(4).ok_or("Save offset overflow")?;
     let raw: [u8; 4] = bytes.get(*cursor..end).ok_or("Save is truncated")?
         .try_into().map_err(|_| "Invalid u32 field")?;
     *cursor = end;
     Ok(u32::from_le_bytes(raw))
 }
 fn take_u64(bytes: &[u8], cursor: &mut usize) -> Result<u64, String> {
-    let end = cursor.checked_add(8).ok_or("Save offset overflow")?;
+    let end = (*cursor).checked_add(8).ok_or("Save offset overflow")?;
     let raw: [u8; 8] = bytes.get(*cursor..end).ok_or("Save is truncated")?
         .try_into().map_err(|_| "Invalid u64 field")?;
     *cursor = end;
@@ -326,7 +326,8 @@ fn take_i32(bytes: &[u8], cursor: &mut usize) -> Result<i32, String> {
     Ok(i32::from_le_bytes(raw))
 }
 fn read_u64(bytes: &[u8], offset: usize) -> Result<u64, String> {
-    let raw: [u8; 8] = bytes.get(offset..offset + 8).ok_or("Save checksum is missing")?
+    let end = offset.checked_add(8).ok_or("Save checksum offset overflow")?;
+    let raw: [u8; 8] = bytes.get(offset..end).ok_or("Save checksum is missing")?
         .try_into().map_err(|_| "Invalid checksum field")?;
     Ok(u64::from_le_bytes(raw))
 }
