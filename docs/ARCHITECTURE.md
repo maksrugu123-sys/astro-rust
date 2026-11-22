@@ -55,9 +55,9 @@ Mining and placement use a 3D DDA ray from just in front of the player along the
 
 ## Chunk streaming and edit retention
 
-The runtime requests the 27 chunks in a one-chunk radius around the player's current chunk coordinate. New chunk generation and mesh creation are limited to two chunks per update, and stale visuals are removed in batches of four. The current active-chunk cap is 40. One shared material is used across streamed terrain entities.
+The runtime requests the 27 chunks in a one-chunk radius around the player's current chunk coordinate. Up to two generation jobs are requested per update, with no more than four jobs in flight; up to two completed chunks are applied and meshed per update. Stale visuals are removed in batches of four. The current active-chunk cap is 40. One shared material is used across streamed terrain entities.
 
-When an edited chunk is unloaded, its complete voxel array is retained in a runtime cache. On reload, deterministic terrain generation runs first and the cached edited array is restored over it. Neighboring loaded chunks are marked dirty on both load and unload so shared boundaries are remeshed. The edit cache is process-local and currently has no durable serialization or hard capacity; it is not a substitute for versioned save files.
+When an edited chunk is unloaded, its complete voxel array is retained in a runtime cache. On reload, deterministic terrain generation runs first and the cached edited array is restored over it. Neighboring loaded chunks are marked dirty on both load and unload so shared boundaries are remeshed. Versioned world saves persist edited chunks and the prototype inventory; however, the runtime edit cache remains process-local and has no disk-backed eviction policy or hard capacity.
 
 
 ## Durable terrain persistence
