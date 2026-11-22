@@ -28,6 +28,8 @@ pub enum VoxelKind {
     Air = 0,
     Regolith = 1,
     Rock = 2,
+    CopperOre = 3,
+    IronOre = 4,
 }
 
 impl VoxelKind {
@@ -68,6 +70,19 @@ fn chunk_neighbors(coord: ChunkCoord) -> [ChunkCoord; 6] {
     ]
 }
 
+fn voxel_hash(seed: u64, voxel: IVec3) -> u64 {
+    let mut value = seed
+        ^ (voxel.x as i64 as u64).wrapping_mul(0x9E37_79B1_85EB_CA87)
+        ^ (voxel.y as i64 as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F)
+        ^ (voxel.z as i64 as u64).wrapping_mul(0x1656_67B1_9E37_79F9);
+    value ^= value >> 30;
+    value = value.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    value ^= value >> 27;
+    value = value.wrapping_mul(0x94D0_49BB_1331_11EB);
+    value ^= value >> 31;
+    value
+}
+
 fn surface_noise(seed: u64, voxel: IVec3) -> f32 {
     let mut value = seed
         ^ (voxel.x as i64 as u64).wrapping_mul(0x9E37_79B1_85EB_CA87)
@@ -97,7 +112,18 @@ fn generate_chunk(coord: ChunkCoord, seed: u64, voxel_size: f32, base_radius: f3
                 if distance <= surface_radius {
                     let depth = surface_radius - distance;
                     let kind = if depth > voxel_size * 2.5 {
-                        VoxelKind::Rock
+                        // 4x4x4 deterministic clusters create ore veins rather than
+                        // isolated random specks. The seed fully determines placement.
+                        let vein_cell = IVec3::new(
+                            voxel.x.div_euclid(4),
+                            voxel.y.div_euclid(4),
+                            voxel.z.div_euclid(4),
+                        );
+                        match voxel_hash(seed ^ 0x0C0F_EE12, vein_cell) % 100 {
+                            0..=5 => VoxelKind::CopperOre,
+                            6..=9 => VoxelKind::IronOre,
+                            _ => VoxelKind::Rock,
+                        }
                     } else {
                         VoxelKind::Regolith
                     };
@@ -824,6 +850,8 @@ fn build_chunk_mesh(world: &TerrainWorld, coord: ChunkCoord) -> Mesh {
                 let color = match rect.kind {
                     VoxelKind::Regolith => [0.66, 0.48, 0.30, 1.0],
                     VoxelKind::Rock => [0.31, 0.34, 0.38, 1.0],
+                    VoxelKind::CopperOre => [0.78, 0.36, 0.17, 1.0],
+                    VoxelKind::IronOre => [0.43, 0.52, 0.62, 1.0],
                     VoxelKind::Air => [0.0, 0.0, 0.0, 0.0],
                 };
                 let first = positions.len() as u32;
