@@ -143,8 +143,8 @@ fn generate_chunk(coord: ChunkCoord, seed: u64, voxel_size: f32, base_radius: f3
 
 #[derive(Resource)]
 pub struct TerrainGenerationQueue {
-    sender: mpsc::Sender<(ChunkCoord, VoxelChunk)>,
-    receiver: Mutex<mpsc::Receiver<(ChunkCoord, VoxelChunk)>>,
+    sender: mpsc::Sender<(ChunkCoord, Option<VoxelChunk>)>,
+    receiver: Mutex<mpsc::Receiver<(ChunkCoord, Option<VoxelChunk>)>>,
     pending: HashSet<ChunkCoord>,
     ready: VecDeque<(ChunkCoord, VoxelChunk)>,
 }
@@ -167,18 +167,32 @@ impl TerrainGenerationQueue {
             return;
         }
         let sender = self.sender.clone();
-        thread::spawn(move || {
-            let chunk = generate_chunk(coord, seed, voxel_size, base_radius);
-            let _ = sender.send((coord, chunk));
-        });
+        let worker = thread::Builder::new()
+            .name(format!("astro-chunk-{}-{}-{}", coord.x, coord.y, coord.z))
+            .spawn(move || {
+                let generated = std::panic::catch_unwind(|| {
+                    generate_chunk(coord, seed, voxel_size, base_radius)
+                }).ok();
+                let _ = sender.send((coord, generated));
+            });
+
+        if let Err(error) = worker {
+            self.pending.remove(&coord);
+            warn!("Could not start terrain generation worker: {error}");
+        }
     }
 
     fn collect_completed(&mut self) {
         let Ok(receiver) = self.receiver.lock() else {
             return;
         };
-        while let Ok(result) = receiver.try_recv() {
-            self.ready.push_back(result);
+        while let Ok((coord, result)) = receiver.try_recv() {
+            if let Some(chunk) = result {
+                self.ready.push_back((coord, chunk));
+            } else {
+                self.pending.remove(&coord);
+                warn!("Terrain generation worker failed for chunk {},{},{}; it may be retried", coord.x, coord.y, coord.z);
+            }
         }
     }
 
