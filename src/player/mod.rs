@@ -435,7 +435,7 @@ pub fn apply_terrain_actions(
     let (Ok(camera), Ok(player)) = (camera_query.single(), player_query.single()) else {
         return;
     };
-    let direction = -camera.forward().as_vec3();
+    let direction = camera.forward().as_vec3();
     let origin = player.translation + direction * 0.18;
     let Some((voxel, face_normal)) = terrain.raycast_solid(origin, direction, 7.0) else {
         return;
