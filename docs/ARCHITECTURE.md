@@ -6,6 +6,12 @@ The initial world model uses a spherical planet centered at the origin. Position
 
 Pure planet and player math stays independent of rendering where practical. Local tangent frames provide an orthonormal basis (up, forward, right) at each surface position. Movement is projected onto this tangent plane, then the player is re-projected to the configured surface radius.
 
+## Player and controls
+
+The player is kinematic in the current prototype. A local heading is transported along the surface to avoid resetting orientation to a fixed world axis near the poles. Movement input is resolved against the camera-relative tangent basis.
+
+On touch devices, a fixed lower-left virtual joystick controls movement. Touches beginning on the right side of the screen rotate camera yaw and pitch; simultaneous touches are supported so movement and view control can be used together. Mouse drag and WASD remain available for desktop iteration. The orbit camera uses the local surface normal as its up vector.
+
 ## Planned subsystem boundaries
 
 - planet_core: spherical coordinates, local tangent frames, radial gravity, planet scale.
@@ -27,4 +33,4 @@ The renderer's High profile is a quality target, not a universal default. Runtim
 
 ## Current implementation
 
-The app now has a prototype spherical planet, a capsule player, local tangent-frame math, radial surface alignment, and temporary WASD movement with a follow camera. This is kinematic surface movement only: collision, jumping, physical acceleration, Android touch controls, terrain, streaming, saves, and Android packaging are not implemented yet.
+The app contains a prototype spherical planet, capsule player, local tangent-frame math, radial surface alignment, virtual touch joystick, touch/mouse camera orbit, and desktop WASD movement. Movement is still kinematic: physical acceleration, collision, jumping, terrain, streaming, saves, and Android packaging are not implemented.
