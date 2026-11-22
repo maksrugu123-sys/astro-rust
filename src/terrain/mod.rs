@@ -521,8 +521,16 @@ pub fn stream_terrain_chunks(
         terrain.unload_chunk(coord);
     }
 
+    let mut load_order: Vec<ChunkCoord> = desired.iter().copied().collect();
+    load_order.sort_by_key(|coord| {
+        let dx = (coord.x - center.x) as i64;
+        let dy = (coord.y - center.y) as i64;
+        let dz = (coord.z - center.z) as i64;
+        dx * dx + dy * dy + dz * dz
+    });
+
     let mut loaded_this_frame = 0;
-    for coord in desired.iter().copied() {
+    for coord in load_order {
         if loaded_this_frame >= MAX_CHUNK_LOADS_PER_FRAME
             || terrain.loaded_chunk_count() >= MAX_LOADED_CHUNKS
         {
