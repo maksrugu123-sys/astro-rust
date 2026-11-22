@@ -51,6 +51,7 @@
 - [x] Deterministic copper and iron ore veins in underground rock (source implemented; runtime distribution pending).
 - [ ] Oxygen and energy loops.
 - [x] Basic material inventory with mining collection and on-screen counts (source implemented; UI verification pending).
+- [x] Persist inventory counts in save format v3 while retaining v1/v2 terrain-save decoding.
 - [ ] Inventory capacity, item stacks, and basic crafting.
 - [ ] Modular base placement.
 
@@ -130,3 +131,11 @@ No builds, tests, APK packaging, or device profiling have been run. Terrain unit
 - Bumped the save format to version 2 while keeping the decoder compatible with version 1 files; new voxel IDs are validated and restored.
 - No biome-specific surface generation, crafting, inventory persistence beyond the existing terrain edits, or runtime balancing is included yet.
 - Tests/builds/device checks remain unrun.
+
+
+### Inventory persistence follow-up
+
+- Save format v3 now stores regolith, rock, copper, and iron counts with the world snapshot.
+- Decoder compatibility remains for v1 terrain saves and v2 ore-aware terrain saves; those older formats restore an empty inventory.
+- Inventory counts are clamped to the prototype stack cap of 99 when loading.
+- Save round-trip coverage now includes inventory counters; the test has not been executed.
