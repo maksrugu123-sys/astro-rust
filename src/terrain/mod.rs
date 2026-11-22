@@ -138,7 +138,6 @@ impl TerrainWorld {
 
         let mut chunk = VoxelChunk::default();
         let origin = coord.origin();
-        let radius_voxels = self.base_radius / self.voxel_size;
 
         for z in 0..CHUNK_SIZE {
             for y in 0..CHUNK_SIZE {
@@ -261,6 +260,17 @@ impl TerrainWorld {
         value = value.wrapping_mul(0x94D0_49BB_1331_11EB);
         value ^= value >> 31;
         ((value >> 40) as f32 / ((1_u32 << 24) - 1) as f32) * 2.0 - 1.0
+    }
+}
+
+/// Preloads the eight chunks whose bounds surround the planet origin.
+pub fn generate_starting_chunks(mut terrain: ResMut<TerrainWorld>) {
+    for z in -1..=0 {
+        for y in -1..=0 {
+            for x in -1..=0 {
+                terrain.ensure_chunk(ChunkCoord { x, y, z });
+            }
+        }
     }
 }
 
