@@ -68,7 +68,7 @@ impl SaveStore {
         }
         let metadata = fs::metadata(&path).map_err(|e| format!("Cannot inspect save: {e}"))?;
         let max_size = 40 + MAX_SAVED_CHUNKS * (12 + CHUNK_BLOCKS) + 8;
-        if metadata.len() as usize > max_size {
+        if metadata.len() > max_size as u64 {
             return Err("Save file exceeds the supported size limit".into());
         }
         let mut bytes = Vec::with_capacity(metadata.len() as usize);
@@ -82,14 +82,15 @@ impl SaveStore {
         let Some(directory) = self.directory.as_ref() else {
             return Err("No writable application data directory is available".into());
         };
-        let chunks = terrain.export_edited_chunks();
-        if chunks.len() > MAX_SAVED_CHUNKS {
+        let edited_count = terrain.edited_chunk_count();
+        if edited_count > MAX_SAVED_CHUNKS {
             return Err(format!(
                 "World contains {} edited chunks; save limit is {}",
-                chunks.len(),
+                edited_count,
                 MAX_SAVED_CHUNKS
             ));
         }
+        let chunks = terrain.export_edited_chunks();
 
         let bytes = encode_save(terrain, &chunks, inventory)?;
         fs::create_dir_all(directory)
@@ -232,9 +233,12 @@ fn encode_save(
     push_u16(&mut bytes, inventory.iron);
     push_u32(&mut bytes, chunks.len() as u32);
 
+    if inventory.regolith > 99 || inventory.rock > 99 || inventory.copper > 99 || inventory.iron > 99 {
+        return Err("Inventory contains a stack above its supported capacity".into());
+    }
     let mut unique = HashSet::with_capacity(chunks.len());
     for (coord, blocks) in chunks {
-        if blocks.len() != CHUNK_BLOCKS || !unique.insert(*coord) {
+        if !coord.is_representable() || blocks.len() != CHUNK_BLOCKS || !unique.insert(*coord) {
             return Err("Invalid or duplicate edited chunk in save snapshot".into());
         }
         push_i32(&mut bytes, coord.x);
