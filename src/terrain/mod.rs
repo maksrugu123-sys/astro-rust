@@ -84,16 +84,7 @@ fn voxel_hash(seed: u64, voxel: IVec3) -> u64 {
 }
 
 fn surface_noise(seed: u64, voxel: IVec3) -> f32 {
-    let mut value = seed
-        ^ (voxel.x as i64 as u64).wrapping_mul(0x9E37_79B1_85EB_CA87)
-        ^ (voxel.y as i64 as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F)
-        ^ (voxel.z as i64 as u64).wrapping_mul(0x1656_67B1_9E37_79F9);
-    value ^= value >> 30;
-    value = value.wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    value ^= value >> 27;
-    value = value.wrapping_mul(0x94D0_49BB_1331_11EB);
-    value ^= value >> 31;
-    ((value >> 40) as f32 / ((1_u32 << 24) - 1) as f32) * 2.0 - 1.0
+    ((voxel_hash(seed, voxel) >> 40) as f32 / ((1_u32 << 24) - 1) as f32) * 2.0 - 1.0
 }
 
 /// Pure chunk generation: safe to execute on a worker without touching Bevy assets.
