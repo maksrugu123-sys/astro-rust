@@ -14,6 +14,11 @@ const MOVE_SPEED: f32 = 2.8;
 #[derive(Component)]
 struct PlanetPlayer;
 
+/// The heading is transported across the surface instead of being reset to a
+/// global axis every frame, avoiding a direction singularity at the poles.
+#[derive(Component)]
+struct PlayerHeading(Vec3);
+
 /// Spawns a simple capsule and a follow camera above the starting surface.
 pub fn spawn_player(
     mut commands: Commands,
@@ -35,6 +40,7 @@ pub fn spawn_player(
             ..default()
         },
         PlanetPlayer,
+        PlayerHeading(Vec3::Z),
         Name::new("Player"),
     ));
 
@@ -52,21 +58,21 @@ pub fn spawn_player(
 pub fn move_player_on_planet(
     time: Res<Time>,
     keyboard: Res<ButtonInput<KeyCode>>,
-    mut player_query: Query<&mut Transform, With<PlanetPlayer>>,
+    mut player_query: Query<(&mut Transform, &mut PlayerHeading), With<PlanetPlayer>>,
     mut camera_query: Query<&mut Transform, (With<Camera3d>, Without<PlanetPlayer>)>,
 ) {
-    let Ok(mut player_transform) = player_query.single_mut() else {
+    let Ok((mut player_transform, mut heading)) = player_query.single_mut() else {
         return;
     };
 
-    let Some(frame) = tangent_frame(player_transform.translation, Vec3::Z) else {
+    let Some(frame) = tangent_frame(player_transform.translation, heading.0) else {
         return;
     };
 
-    let horizontal = if keyboard.pressed(KeyCode::KeyD) { 1.0 } else { 0.0 }
-        - if keyboard.pressed(KeyCode::KeyA) { 1.0 } else { 0.0 };
-    let vertical = if keyboard.pressed(KeyCode::KeyW) { 1.0 } else { 0.0 }
-        - if keyboard.pressed(KeyCode::KeyS) { 1.0 } else { 0.0 };
+    let horizontal = (if keyboard.pressed(KeyCode::KeyD) { 1.0 } else { 0.0 })
+        - (if keyboard.pressed(KeyCode::KeyA) { 1.0 } else { 0.0 });
+    let vertical = (if keyboard.pressed(KeyCode::KeyW) { 1.0 } else { 0.0 })
+        - (if keyboard.pressed(KeyCode::KeyS) { 1.0 } else { 0.0 });
 
     let input = frame.right * horizontal + frame.forward * vertical;
     if input.length_squared() > 1.0e-6 {
@@ -78,16 +84,16 @@ pub fn move_player_on_planet(
     }
 
     if let Some(up) = surface_normal(player_transform.translation) {
-        player_transform.rotation = Quat::from_rotation_arc(Vec3::Y, up);
+        if let Some(updated_frame) = tangent_frame(player_transform.translation, heading.0) {
+            heading.0 = updated_frame.forward;
+            player_transform.rotation = Quat::from_rotation_arc(Vec3::Y, up);
 
-        if let (Some(updated_frame), Ok(mut camera_transform)) = (
-            tangent_frame(player_transform.translation, Vec3::Z),
-            camera_query.single_mut(),
-        ) {
-            let camera_position =
-                player_transform.translation + up * 2.4 - updated_frame.forward * 4.8;
-            *camera_transform = Transform::from_translation(camera_position)
-                .looking_at(player_transform.translation + up * 0.55, up);
+            if let Ok(mut camera_transform) = camera_query.single_mut() {
+                let camera_position =
+                    player_transform.translation + up * 2.4 - updated_frame.forward * 4.8;
+                *camera_transform = Transform::from_translation(camera_position)
+                    .looking_at(player_transform.translation + up * 0.55, up);
+            }
         }
     }
 }
