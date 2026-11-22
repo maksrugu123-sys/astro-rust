@@ -16,7 +16,8 @@
 - [x] Add radial gravity, jump impulse, and spherical-boundary contact response.
 - [x] Add a separate mobile jump touch target.
 - [ ] Verify physical movement and touch layout on desktop and Android.
-- [ ] Replace spherical collision with terrain-aware collision.
+- [x] Replace ideal spherical collision with radial contact against the generated voxel surface.
+- [x] Spawn the player using the sampled terrain height at the starting location.
 - [ ] Basic terrain material and horizon/sky presentation.
 - [ ] Device-aware graphics settings (High / Medium / Low).
 
@@ -28,12 +29,13 @@
 - [x] Build exposed-face chunk meshes and render voxel terrain.
 - [x] Replace the smooth placeholder planet mesh with voxel chunk visuals.
 - [x] Add per-chunk dirty flags and targeted mesh rebuild support.
-- [ ] Connect player grounding and movement to voxel terrain collision.
+- [x] Connect player grounding and movement to voxel terrain collision.
 - [ ] Add deterministic terrain edits with persistence across unload/reload.
 - [ ] Generate chunks and meshes asynchronously.
 - [ ] Add chunk cache limits and memory budgets.
 - [ ] Add distance-based LOD and streaming priorities.
-- [ ] Add an in-game mining tool and block placement controls.
+- [x] Add voxel ray queries for mining and block placement.
+- [x] Add touch HUD actions for MINE and PLACE, plus desktop E/Q controls.
 
 ## Milestone 3 — Exploration systems
 - [ ] Seeded biomes, resources, and points of interest.
@@ -49,4 +51,15 @@
 
 ## Current validation status
 
-No builds, tests, APK packaging, or device profiling have been run. Terrain unit tests are present but have not been executed. Chunk mesh generation and dirty-mesh rebuilding are implemented in source but remain uncompiled and unverified. Android packaging is not implemented.
+No builds, tests, APK packaging, or device profiling have been run. Terrain unit tests are present but have not been executed. Chunk mesh generation, terrain-aware player contact, voxel ray queries, mining, and block placement are implemented in source but remain uncompiled and unverified. Android packaging is not implemented.
+
+## Latest gameplay batch — voxel interaction
+
+- Player spawn height is sampled from the generated terrain along the initial radial direction.
+- Ground contact now uses the first solid radial terrain boundary plus the capsule surface offset; the old ideal sphere is no longer used as the sole collision surface.
+- Missing terrain samples do not silently become an invisible spherical collider.
+- Added bounded voxel ray sampling for selecting the first solid block and estimating its face normal.
+- Mining removes the selected voxel; placement adds a regolith block in the adjacent face cell and rejects placements too close to the player.
+- Added mobile MINE and PLACE touch targets. Desktop iteration uses E to mine and Q to place; the existing jump control remains separate.
+- Terrain edits flow through existing dirty-chunk invalidation and mesh refresh.
+- Known limits: contact is radial rather than a full capsule-vs-voxel solver; ray queries use fixed-step sampling; chunk streaming is not yet present, so interaction is limited to loaded chunks.
