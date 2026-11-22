@@ -336,15 +336,30 @@ pub fn spawn_chunk_meshes(
 
 /// Rebuilds only meshes affected by block edits.
 pub fn refresh_dirty_chunk_meshes(
-    terrain: Res<TerrainWorld>,
+    mut terrain: ResMut<TerrainWorld>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut query: Query<&TerrainChunkVisual>,
-    mut terrain_mut: ResMut<TerrainWorld>,
+    query: Query<&TerrainChunkVisual>,
 ) {
-    // This system is intentionally a no-op placeholder until edit input is connected.
-    // The separate immutable/mutable resource parameters are not valid in Bevy ECS;
-    // actual dirty rebuilds are performed by the dedicated helper in the next stage.
-    let _ = (&terrain, &mut meshes, &mut query, &mut terrain_mut);
+    let dirty: Vec<(ChunkCoord, Handle<Mesh>)> = query
+        .iter()
+        .filter_map(|visual| {
+            terrain
+                .chunks
+                .get(&visual.coord)
+                .filter(|chunk| chunk.mesh_dirty)
+                .map(|_| (visual.coord, visual.mesh.clone()))
+        })
+        .collect();
+
+    for (coord, handle) in dirty {
+        let rebuilt = build_chunk_mesh(&terrain, coord);
+        if let Some(mesh) = meshes.get_mut(&handle) {
+            *mesh = rebuilt;
+        }
+        if let Some(chunk) = terrain.chunks.get_mut(&coord) {
+            chunk.mesh_dirty = false;
+        }
+    }
 }
 
 fn build_chunk_mesh(world: &TerrainWorld, coord: ChunkCoord) -> Mesh {
