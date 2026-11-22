@@ -698,6 +698,37 @@ mod tests {
     }
 
     #[test]
+    fn incremental_save_preserves_unloaded_manifest_records() {
+        let root = std::env::temp_dir().join(format!(
+            "astro-rust-preserve-index-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+
+        let world = TerrainWorld::new(321, 0.25, 3.0);
+        let coord = ChunkCoord { x: -7, y: 2, z: 5 };
+        let records = HashMap::from([(coord, 0xCAFE_BABE_u64)]);
+        let mut store = SaveStore {
+            directory: Some(root.clone()),
+            last_saved_revision: None,
+            last_saved_inventory: None,
+            timer: Timer::from_seconds(AUTOSAVE_SECONDS, TimerMode::Repeating),
+            catalog: records.clone(),
+            loaded_records: HashSet::new(),
+            failed_reads: HashSet::new(),
+            load_failed: false,
+        };
+
+        store.save(&world, &Inventory::default()).unwrap();
+        let manifest = fs::read(root.join(MANIFEST_FILE)).unwrap();
+        let decoded = decode_manifest(&manifest).unwrap();
+        assert_eq!(decoded.chunk_records, vec![(coord, records[&coord])]);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn manifest_rejects_old_save_versions() {
         for version in 1..FORMAT_VERSION {
             let mut bytes = Vec::new();
