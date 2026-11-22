@@ -24,7 +24,7 @@
 - Use spherical coordinates and local tangent frames for surface movement.
 - Keep terrain data chunked; never allocate a whole planet as one dense voxel array.
 - Separate world generation, terrain storage/meshing, player controls, survival, building, and persistence.
-- Treat save files as versioned data with explicit migration rules.
+- Keep one explicitly defined current save format; reject obsolete formats clearly unless the user specifically requests migration.
 - Avoid unnecessary dependencies and measure before optimizing.
 
 ## Validation
@@ -39,5 +39,5 @@
 - Keep loaded chunk arrays dense only while they are needed for gameplay/meshing. Unloaded edits must be compact and have a bounded in-memory cache.
 - The target persistence design is an index/manifest plus independently checksummed chunk records. A damaged chunk must be recoverable or regenerable without invalidating unrelated chunks.
 - Chunk-file reads and writes must be bounded and scheduled; do not perform unbounded synchronous disk work in a frame-critical path.
-- Preserve v1–v3 save migration and never silently discard legacy edits. Any future migration must be validated with explicit fixtures before replacing the old format.
+- The current save format is v4 only. Reject v1–v3 explicitly; do not reintroduce legacy decoders unless the user requests backward compatibility.
 - Before extending planet dimensions, design 64-bit world/chunk coordinates and a floating-origin or chunk-local rendering transform. Do not assume f32 world-space positions retain precision at arbitrarily large distances.
