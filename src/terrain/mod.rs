@@ -261,6 +261,43 @@ impl TerrainWorld {
         last_solid
     }
 
+    /// Finds the first solid voxel along a world-space ray using bounded sampling.
+    /// Returns the voxel coordinate and the approximate outward face normal.
+    pub fn raycast_solid(
+        &self,
+        origin: Vec3,
+        direction: Vec3,
+        max_distance: f32,
+    ) -> Option<(IVec3, IVec3)> {
+        if !origin.is_finite() || !max_distance.is_finite() || max_distance <= 0.0 {
+            return None;
+        }
+        let direction = direction.try_normalize()?;
+        let step = (self.voxel_size * 0.35).max(0.025);
+        let mut distance = 0.0;
+        let mut previous_position = origin;
+
+        while distance <= max_distance {
+            let position = origin + direction * distance;
+            let voxel = (position / self.voxel_size).floor().as_ivec3();
+            if self.get_block(voxel).is_some_and(VoxelKind::is_solid) {
+                let center = (voxel.as_vec3() + Vec3::splat(0.5)) * self.voxel_size;
+                let delta = previous_position - center;
+                let normal = if delta.x.abs() >= delta.y.abs() && delta.x.abs() >= delta.z.abs() {
+                    IVec3::new(delta.x.signum() as i32, 0, 0)
+                } else if delta.y.abs() >= delta.z.abs() {
+                    IVec3::new(0, delta.y.signum() as i32, 0)
+                } else {
+                    IVec3::new(0, 0, delta.z.signum() as i32)
+                };
+                return Some((voxel, if normal == IVec3::ZERO { -direction.round().as_ivec3() } else { normal }));
+            }
+            previous_position = position;
+            distance += step;
+        }
+        None
+    }
+
     pub fn sphere_touches_ground(&self, center: Vec3, body_radius: f32) -> bool {
         if !center.is_finite() || !body_radius.is_finite() || body_radius < 0.0 {
             return false;
@@ -466,6 +503,17 @@ mod tests {
         let removed = world.dig_sphere(Vec3::new(0.0, 2.8, 0.0), 0.65);
         assert!(removed > 0);
         assert!(world.chunks.values().any(|chunk| chunk.edited));
+    }
+
+    #[test]
+    fn raycast_finds_a_solid_voxel_and_face() {
+        let mut world = TerrainWorld::new(7, 0.25, 3.0);
+        world.ensure_chunk(ChunkCoord { x: 0, y: 0, z: 0 });
+        let hit = world.raycast_solid(Vec3::new(0.0, 4.0, 0.0), -Vec3::Y, 2.0);
+        assert!(hit.is_some());
+        let (voxel, normal) = hit.unwrap();
+        assert!(world.get_block(voxel).is_some_and(VoxelKind::is_solid));
+        assert_eq!(normal, IVec3::Y);
     }
 
     #[test]
