@@ -1,0 +1,12 @@
+/target/
+/android/.gradle/
+/android/local.properties
+*.apk
+*.aab
+*.so
+*.dylib
+*.dll
+*.pdb
+.idea/
+.vscode/
+.DS_Store
