@@ -123,7 +123,10 @@ impl SaveStore {
         let Some(checksum) = self.catalog.get(&coord).copied() else {
             return false;
         };
-        if self.loaded_records.contains(&coord) || self.failed_reads.contains(&coord) {
+        if self.loaded_records.contains(&coord) {
+            return false;
+        }
+        if self.failed_reads.contains(&coord) {
             return true;
         }
         let Some(directory) = self.chunk_directory() else {
@@ -390,13 +393,13 @@ fn encode_manifest_records(
     push_u32(&mut bytes, ordered.len() as u32);
     let mut unique = HashSet::with_capacity(ordered.len());
     for (coord, checksum) in ordered {
-        if !coord.is_representable() || !unique.insert(**coord) {
+        if !coord.is_representable() || !unique.insert(*coord) {
             return Err("Manifest contains an invalid or duplicate chunk coordinate".into());
         }
         push_i32(&mut bytes, coord.x);
         push_i32(&mut bytes, coord.y);
         push_i32(&mut bytes, coord.z);
-        push_u64(&mut bytes, **checksum);
+        push_u64(&mut bytes, *checksum);
     }
     let checksum = checksum64(&bytes);
     push_u64(&mut bytes, checksum);
