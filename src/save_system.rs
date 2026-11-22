@@ -68,8 +68,12 @@ impl SaveStore {
         self.directory.as_ref().map(|dir| dir.join(CHUNK_DIRECTORY))
     }
 
-    fn chunk_path(directory: &Path, coord: ChunkCoord) -> PathBuf {
-        directory.join(format!("{}_{}_{}.chunk", coord.x, coord.y, coord.z))
+    fn chunk_filename(coord: ChunkCoord, checksum: u64) -> String {
+        format!("{}_{}_{}_{checksum:016x}.chunk", coord.x, coord.y, coord.z)
+    }
+
+    fn chunk_path(directory: &Path, coord: ChunkCoord, checksum: u64) -> PathBuf {
+        directory.join(Self::chunk_filename(coord, checksum))
     }
 
     fn load(&self) -> Result<Option<SavedWorld>, String> {
@@ -91,10 +95,10 @@ impl SaveStore {
         let manifest = decode_manifest(&manifest_bytes)?;
         let chunk_directory = self.chunk_directory()
             .ok_or("No writable chunk directory is available")?;
-        let mut chunks = Vec::with_capacity(manifest.chunk_coords.len());
+        let mut chunks = Vec::with_capacity(manifest.chunk_records.len());
         let mut damaged = 0usize;
-        for coord in manifest.chunk_coords {
-            let path = Self::chunk_path(&chunk_directory, coord);
+        for (coord, expected_checksum) in manifest.chunk_records {
+            let path = Self::chunk_path(&chunk_directory, coord, expected_checksum);
             let loaded = (|| -> Result<Vec<(u16, VoxelKind)>, String> {
                 let metadata = fs::metadata(&path)
                     .map_err(|e| format!("Cannot inspect chunk file: {e}"))?;
@@ -105,7 +109,7 @@ impl SaveStore {
                 File::open(&path)
                     .and_then(|mut file| file.read_to_end(&mut bytes))
                     .map_err(|e| format!("Cannot read chunk file: {e}"))?;
-                decode_chunk(&bytes, coord)
+                decode_chunk(&bytes, coord, expected_checksum)
             })();
             match loaded {
                 Ok(edits) => chunks.push((coord, edits)),
@@ -146,10 +150,11 @@ impl SaveStore {
 
         let mut retained = HashSet::with_capacity(chunks.len());
         for (coord, edits) in &chunks {
-            let filename = format!("{}_{}_{}.chunk", coord.x, coord.y, coord.z);
-            retained.insert(filename);
             let bytes = encode_chunk(*coord, edits)?;
-            let path = Self::chunk_path(&chunk_directory, *coord);
+            let checksum = read_u64(&bytes, bytes.len() - 8)?;
+            let filename = Self::chunk_filename(*coord, checksum);
+            retained.insert(filename);
+            let path = Self::chunk_path(&chunk_directory, *coord, checksum);
             let temp_path = path.with_extension("chunk.tmp");
             write_atomic(&temp_path, &path, &bytes)
                 .map_err(|e| format!("Cannot persist chunk {},{},{}: {e}", coord.x, coord.y, coord.z))?;
@@ -288,7 +293,7 @@ struct ManifestData {
     voxel_size: f32,
     base_radius: f32,
     inventory: [u16; 4],
-    chunk_coords: Vec<ChunkCoord>,
+    chunk_records: Vec<(ChunkCoord, u64)>,
 }
 
 fn validate_inventory(inventory: &Inventory) -> Result<(), String> {
@@ -309,8 +314,8 @@ fn encode_manifest(
     if chunks.len() > MAX_SAVED_CHUNKS {
         return Err("Save contains too many edited chunks".into());
     }
-    let mut ordered: Vec<_> = chunks.iter().map(|(coord, _)| *coord).collect();
-    ordered.sort_by_key(|coord| (coord.x, coord.y, coord.z));
+    let mut ordered: Vec<_> = chunks.iter().collect();
+    ordered.sort_by_key(|(coord, _)| (coord.x, coord.y, coord.z));
     let mut bytes = Vec::with_capacity(40 + ordered.len() * 12 + 8);
     bytes.extend_from_slice(MAGIC);
     push_u32(&mut bytes, FORMAT_VERSION);
@@ -323,13 +328,16 @@ fn encode_manifest(
     push_u16(&mut bytes, inventory.iron);
     push_u32(&mut bytes, ordered.len() as u32);
     let mut unique = HashSet::with_capacity(ordered.len());
-    for coord in ordered {
-        if !coord.is_representable() || !unique.insert(coord) {
+    for (coord, edits) in ordered {
+        if !coord.is_representable() || !unique.insert(*coord) {
             return Err("Manifest contains an invalid or duplicate chunk coordinate".into());
         }
+        let chunk_bytes = encode_chunk(*coord, edits)?;
+        let chunk_checksum = read_u64(&chunk_bytes, chunk_bytes.len() - 8)?;
         push_i32(&mut bytes, coord.x);
         push_i32(&mut bytes, coord.y);
         push_i32(&mut bytes, coord.z);
+        push_u64(&mut bytes, chunk_checksum);
     }
     let checksum = checksum64(&bytes);
     push_u64(&mut bytes, checksum);
@@ -399,12 +407,12 @@ fn decode_manifest(bytes: &[u8]) -> Result<ManifestData, String> {
     {
         return Err("World manifest metadata is outside supported bounds".into());
     }
-    let expected = cursor.checked_add(count.checked_mul(12).ok_or("Manifest size overflow")?)
+    let expected = cursor.checked_add(count.checked_mul(20).ok_or("Manifest size overflow")?)
         .ok_or("Manifest size overflow")?;
     if expected != payload_end {
         return Err("World manifest length does not match its chunk index".into());
     }
-    let mut chunk_coords = Vec::with_capacity(count);
+    let mut chunk_records = Vec::with_capacity(count);
     let mut unique = HashSet::with_capacity(count);
     for _ in 0..count {
         let coord = ChunkCoord {
@@ -415,19 +423,21 @@ fn decode_manifest(bytes: &[u8]) -> Result<ManifestData, String> {
         if !coord.is_representable() || !unique.insert(coord) {
             return Err("World manifest contains an invalid or duplicate chunk coordinate".into());
         }
-        chunk_coords.push(coord);
+        let chunk_checksum = take_u64(bytes, &mut cursor)?;
+        chunk_records.push((coord, chunk_checksum));
     }
-    Ok(ManifestData { seed, voxel_size, base_radius, inventory, chunk_coords })
+    Ok(ManifestData { seed, voxel_size, base_radius, inventory, chunk_records })
 }
 
-fn decode_chunk(bytes: &[u8], expected_coord: ChunkCoord) -> Result<Vec<(u16, VoxelKind)>, String> {
+fn decode_chunk(bytes: &[u8], expected_coord: ChunkCoord, expected_checksum: u64) -> Result<Vec<(u16, VoxelKind)>, String> {
     if bytes.len() < 34 || bytes.len() as u64 > MAX_CHUNK_FILE_BYTES
         || &bytes[..8] != CHUNK_MAGIC
     {
         return Err("Chunk file header is missing or invalid".into());
     }
     let payload_end = bytes.len() - 8;
-    if checksum64(&bytes[..payload_end]) != read_u64(bytes, payload_end)? {
+    let stored_checksum = read_u64(bytes, payload_end)?;
+    if stored_checksum != expected_checksum || checksum64(&bytes[..payload_end]) != stored_checksum {
         return Err("Chunk checksum mismatch".into());
     }
     let mut cursor = 8;
@@ -560,10 +570,12 @@ mod tests {
         assert_eq!(decoded_manifest.voxel_size, 0.25);
         assert_eq!(decoded_manifest.base_radius, 3.0);
         assert_eq!(decoded_manifest.inventory, [4, 5, 6, 7]);
-        assert_eq!(decoded_manifest.chunk_coords, vec![coord]);
+        assert_eq!(decoded_manifest.chunk_records.len(), 1);
+        assert_eq!(decoded_manifest.chunk_records[0].0, coord);
 
         let chunk_file = encode_chunk(coord, &edits).unwrap();
-        assert_eq!(decode_chunk(&chunk_file, coord).unwrap(), edits);
+        let checksum = read_u64(&chunk_file, chunk_file.len() - 8).unwrap();
+        assert_eq!(decode_chunk(&chunk_file, coord, checksum).unwrap(), edits);
     }
 
     #[test]
@@ -593,8 +605,10 @@ mod tests {
         let first_bytes = encode_chunk(first, &[(3, VoxelKind::Air)]).unwrap();
         let mut second_bytes = encode_chunk(second, &[(4, VoxelKind::CopperOre)]).unwrap();
         second_bytes[20] ^= 0x20;
-        assert_eq!(decode_chunk(&first_bytes, first).unwrap(), vec![(3, VoxelKind::Air)]);
-        assert!(decode_chunk(&second_bytes, second).is_err());
+        let first_checksum = read_u64(&first_bytes, first_bytes.len() - 8).unwrap();
+        assert_eq!(decode_chunk(&first_bytes, first, first_checksum).unwrap(), vec![(3, VoxelKind::Air)]);
+        let second_checksum = read_u64(&second_bytes, second_bytes.len() - 8).unwrap();
+        assert!(decode_chunk(&second_bytes, second, second_checksum).is_err());
     }
 
     #[test]
@@ -602,7 +616,8 @@ mod tests {
         let stored = ChunkCoord { x: 2, y: 0, z: 0 };
         let expected = ChunkCoord { x: 1, y: 0, z: 0 };
         let bytes = encode_chunk(stored, &[(0, VoxelKind::Rock)]).unwrap();
-        assert!(decode_chunk(&bytes, expected).is_err());
+        let checksum = read_u64(&bytes, bytes.len() - 8).unwrap();
+        assert!(decode_chunk(&bytes, expected, checksum).is_err());
     }
 
     #[test]
