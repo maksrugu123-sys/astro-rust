@@ -28,15 +28,10 @@ pub fn run_app() {
         Startup,
         (
             planet::spawn_test_planet,
-            player::spawn_player,
-            player::spawn_touch_hud,
-        ),
-    )
-    .add_systems(
-        Startup,
-        (
             terrain::generate_starting_chunks,
             terrain::spawn_chunk_meshes,
+            player::spawn_player,
+            player::spawn_touch_hud,
         )
             .chain(),
     )
@@ -47,10 +42,11 @@ pub fn run_app() {
             player::update_orbit_state,
             player::move_player_on_planet,
             player::update_follow_camera,
+            player::apply_terrain_actions,
+            terrain::refresh_dirty_chunk_meshes,
         )
             .chain(),
-    )
-    .add_systems(Update, terrain::refresh_dirty_chunk_meshes);
+    );
 
     app.run();
 }
