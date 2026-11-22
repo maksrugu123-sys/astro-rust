@@ -185,7 +185,7 @@ No builds, tests, APK packaging, or device profiling have been run. Terrain, gre
 - Chunk filenames include their content checksum. New chunk files are written and flushed first; the manifest is atomically replaced last as the save commit point. Old/orphaned chunk files are cleaned only after the manifest commit, so an interrupted save leaves the previous manifest's immutable chunk files available.
 - The loader validates the manifest and each chunk independently. A missing, oversized, malformed, coordinate-mismatched, or checksum-invalid chunk is skipped with a warning; other valid chunks still load.
 - Versions 1–4 are explicitly rejected. There is no legacy decoder or migration path.
-- This removes the single giant world-save file and whole-world checksum failure domain. However, startup still reads all indexed chunk deltas into the in-memory edit cache, and saving still snapshots all deltas before writing. A bounded disk-backed lazy cache, asynchronous scheduled disk I/O, and 64-bit world indexing remain future work.
+- This removes the single giant world-save file and whole-world checksum failure domain. Startup now reads only the manifest index; chunk payloads are fetched asynchronously as nearby chunks enter streaming. A chunk remains unavailable until its record passes checksum/version/coordinate validation. Incremental manifests preserve untouched records without loading their payloads. The unloaded-edit cache is still unbounded, and autosave/suspend/exit writes and manifest replacement remain synchronous. A bounded cache with safe eviction, asynchronous save commit, and 64-bit world indexing remain future work.
 - Source changes and new persistence tests are uncompiled and untested; no build, test, APK, CI, or device profiling was run.
 
 
@@ -193,7 +193,7 @@ No builds, tests, APK packaging, or device profiling have been run. Terrain, gre
 
 - Added `src/chunk_io.rs`, a bounded worker queue for reading individual chunk files away from the frame thread. It uses two named workers, a 16-request bounded queue, a 16-completion backpressure queue, per-file size limits, duplicate-coordinate suppression, and a per-frame completion limit at the API boundary.
 - Registered the queue as an application resource. The worker returns raw bytes only; the save subsystem must still validate the chunk checksum, format version, and coordinate before applying any edit.
-- This is infrastructure only: terrain streaming does not yet submit requests to this queue, and startup still eagerly decodes every indexed chunk. No claim of lazy loading, cache eviction, or non-blocking autosave is made.
+- The queue is now used by terrain streaming: startup reads the manifest index only, nearby saved chunks are fetched asynchronously, and validated edits are applied before generation can expose the chunk. Failed reads leave that coordinate blocked. Untouched records are preserved when writing a new manifest. Cache eviction and asynchronous save/manifest commits are not yet implemented.
 - Added source-level tests for empty queue state and missing-file handling. Tests, formatting, and compilation have not been run.
 
 
