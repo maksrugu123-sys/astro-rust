@@ -25,14 +25,14 @@ struct JoystickThumb;
 
 /// Normalized movement input and per-frame camera drag, populated from touch.
 #[derive(Resource, Default)]
-struct TouchControls {
+pub struct TouchControls {
     movement: Vec2,
     look_delta: Vec2,
 }
 
 /// Camera orbit is expressed relative to the player's local surface frame.
 #[derive(Resource)]
-struct CameraOrbit {
+pub struct CameraOrbit {
     yaw: f32,
     pitch: f32,
 }
