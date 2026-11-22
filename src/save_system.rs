@@ -4,7 +4,6 @@ use std::{
     fs::{self, File},
     io::{Read, Write},
     path::PathBuf,
-    time::Duration,
 };
 
 use bevy::prelude::*;
@@ -142,6 +141,27 @@ pub fn autosave_world(
             info!("ASTRO-RUST world autosaved");
         }
         Err(error) => warn!("ASTRO-RUST autosave failed: {error}"),
+    }
+}
+
+/// Save on the last active frame before Android/iOS backgrounds the app.
+pub fn save_world_on_suspend(
+    mut lifecycle: MessageReader<bevy::window::AppLifecycle>,
+    terrain: Res<TerrainWorld>,
+    mut store: ResMut<SaveStore>,
+) {
+    let should_save = lifecycle
+        .read()
+        .any(|state| *state == bevy::window::AppLifecycle::WillSuspend);
+    if !should_save || store.last_saved_revision == Some(terrain.edit_revision()) {
+        return;
+    }
+    match store.save(&terrain) {
+        Ok(()) => {
+            store.last_saved_revision = Some(terrain.edit_revision());
+            info!("ASTRO-RUST world saved before suspend");
+        }
+        Err(error) => warn!("ASTRO-RUST suspend save failed: {error}"),
     }
 }
 
