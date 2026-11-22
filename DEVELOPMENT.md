@@ -40,7 +40,9 @@
 - [ ] Add cancellation tokens and worker-failure recovery for interrupted generation jobs.
 - [ ] Replace per-job OS thread creation with Bevy's shared compute pool after profiling thread scheduling on Android.
 - [ ] Add a bounded durable edit-cache policy and device-aware memory budgets.
-- [ ] Add distance-based LOD and streaming priorities.
+- [x] Add stable distance-based chunk request priorities.
+- [x] Greedily merge coplanar faces of the same voxel material to reduce chunk mesh geometry (source implemented; visual verification pending).
+- [ ] Add distance-based LOD for far terrain.
 - [x] Add voxel ray queries for mining and block placement.
 - [x] Add touch HUD actions for MINE and PLACE, plus desktop E/Q controls.
 
@@ -106,3 +108,12 @@ No builds, tests, APK packaging, or device profiling have been run. Terrain unit
 - Results that are no longer in the player's desired neighborhood are discarded instead of entering the active world.
 - The active loaded-chunk cap remains 40; stale visuals continue to unload in bounded batches.
 - Worker generation and queue integration have not been compiled or runtime-tested. Mesh generation remains on the main thread, and startup's initial eight chunks are still generated synchronously.
+
+
+## Latest terrain mesh optimization
+
+- Replaced per-voxel exposed-face emission with a 16×16 greedy face-mask pass.
+- Adjacent coplanar faces merge only when they share the same voxel material, preserving regolith/rock color boundaries.
+- Face bases are selected so triangle winding follows each face normal for all six directions.
+- Added focused tests for merging uniform regions and keeping different materials separate; tests have not been run.
+- This optimization reduces mesh vertex/index count for broad flat surfaces, but actual savings and GPU impact still require a real build and device profiling.
