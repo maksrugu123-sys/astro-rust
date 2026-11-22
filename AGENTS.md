@@ -37,7 +37,7 @@
 
 - Persist player terrain changes as sparse deltas against deterministic generation; never retain a full dense chunk array solely because it was edited.
 - Keep loaded chunk arrays dense only while they are needed for gameplay/meshing. Unloaded edits must be compact and have a bounded in-memory cache.
-- The target persistence design is an index/manifest plus independently checksummed chunk records. A damaged chunk must be recoverable or regenerable without invalidating unrelated chunks.
-- Chunk-file reads and writes must be bounded and scheduled; do not perform unbounded synchronous disk work in a frame-critical path.
+- The persistence format uses an index/manifest plus independently checksummed, immutable chunk records. A damaged chunk must be recoverable or regenerable without invalidating unrelated chunks.
+- Chunk-file reads and writes must be bounded and scheduled; do not perform unbounded synchronous disk work in a frame-critical path. The current synchronous startup/autosave implementation is transitional and must not be described as the completed disk cache.
 - The current save format is v4 only. Reject v1–v3 explicitly; do not reintroduce legacy decoders unless the user requests backward compatibility.
 - Before extending planet dimensions, design 64-bit world/chunk coordinates and a floating-origin or chunk-local rendering transform. Do not assume f32 world-space positions retain precision at arbitrarily large distances.
