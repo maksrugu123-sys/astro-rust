@@ -55,7 +55,7 @@
 
 ## Current validation status
 
-No builds, tests, APK packaging, or device profiling have been run. Terrain unit tests are present but have not been executed. Chunk mesh generation, terrain-aware player contact, voxel ray queries, mining, and block placement are implemented in source but remain uncompiled and unverified. Android packaging is not implemented.
+No builds, tests, APK packaging, or device profiling have been run. Terrain unit tests are present but have not been executed. Chunk mesh generation, terrain-aware player contact, voxel ray queries, mining, block placement, bounded chunk streaming, and runtime edit restoration are implemented in source but remain uncompiled and unverified. Android packaging is not implemented.
 
 ## Latest gameplay batch — voxel interaction
 
@@ -66,7 +66,7 @@ No builds, tests, APK packaging, or device profiling have been run. Terrain unit
 - Mining removes the selected voxel; placement adds a regolith block in the adjacent face cell and rejects placements too close to the player.
 - Added mobile MINE and PLACE touch targets. Desktop iteration uses E to mine and Q to place; the existing jump control remains separate.
 - Terrain edits flow through existing dirty-chunk invalidation and mesh refresh.
-- Known limits: contact is radial rather than a full capsule-vs-voxel solver; chunk streaming is not yet present, so interaction is limited to loaded chunks.
+- Known limits: contact is radial rather than a full capsule-vs-voxel solver; interaction and support queries only work where the relevant chunks are loaded.
 
 ## Latest streaming batch — bounded terrain neighborhood
 
