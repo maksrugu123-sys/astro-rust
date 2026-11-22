@@ -52,7 +52,7 @@ pub fn run_app() {
             player::update_follow_camera,
             player::apply_terrain_actions,
             player::update_inventory_hud,
-            save_system::process_chunk_io,
+            save_system::SaveStore::process_chunk_io,
             terrain::stream_terrain_chunks,
             terrain::refresh_dirty_chunk_meshes,
             save_system::autosave_world,
