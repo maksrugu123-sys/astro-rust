@@ -9,10 +9,12 @@
 - [ ] Verify Android ARM64 packaging and launch.
 
 ## Milestone 1 — Playable planetary prototype
-- [ ] Orbit camera and Android touch controls.
 - [x] Add a prototype capsule aligned to radial surface-up.
 - [x] Add local tangent-frame math and keyboard movement for desktop iteration.
+- [x] Add a virtual movement joystick and two-finger-capable touch camera drag.
+- [x] Add camera orbit relative to the local spherical surface frame.
 - [ ] Add physical gravity, jumping, and collision handling.
+- [ ] Add a dedicated Android landscape/portrait layout review.
 - [ ] Basic terrain material and horizon/sky presentation.
 - [ ] Device-aware graphics settings (High / Medium / Low).
 
@@ -36,4 +38,4 @@
 - [ ] Profiling on real Android hardware before raising visual defaults.
 
 ## Current validation status
-No builds, tests, APK packaging, or device profiling have been run. Source changes are committed, but compilation and runtime behavior remain unverified. Checklist items are not complete until verified.
+No builds, tests, APK packaging, or device profiling have been run. Touch input, UI layout, and camera behavior are source-implemented but remain unverified on an Android device.
