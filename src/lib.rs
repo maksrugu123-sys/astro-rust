@@ -2,6 +2,7 @@ use bevy::prelude::*;
 
 mod planet;
 mod player;
+mod terrain;
 
 #[bevy_main]
 pub fn main() {
@@ -22,9 +23,15 @@ pub fn run_app() {
     .insert_resource(WinitSettings::mobile())
     .init_resource::<player::TouchControls>()
     .init_resource::<player::CameraOrbit>()
+    .init_resource::<terrain::TerrainWorld>()
     .add_systems(
         Startup,
-        (planet::spawn_test_planet, player::spawn_player, player::spawn_touch_hud),
+        (
+            planet::spawn_test_planet,
+            player::spawn_player,
+            player::spawn_touch_hud,
+            terrain::generate_starting_chunks,
+        ),
     )
     .add_systems(
         Update,
