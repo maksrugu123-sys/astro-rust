@@ -303,6 +303,9 @@ fn decode_save(bytes: &[u8]) -> Result<SavedWorld, String> {
             y: take_i32(bytes, &mut cursor)?,
             z: take_i32(bytes, &mut cursor)?,
         };
+        if !coord.is_representable() {
+            return Err("Save contains a chunk coordinate outside the voxel range".into());
+        }
         if !unique.insert(coord) {
             return Err("Save contains a duplicate chunk coordinate".into());
         }
