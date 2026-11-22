@@ -36,3 +36,8 @@ This command is documented for the Bevy mobile workflow; it has not been run for
 ## Current limitation
 
 There is not yet an Android Gradle wrapper project in this repository, so an APK cannot be produced from this bootstrap alone. The next Android milestone is to add the minimal GameActivity host project and verify a real ARM64 launch. No build or APK task has been run.
+
+
+## Save location
+
+World saves use the application's private internal files directory, resolved from Bevy's Android `ANDROID_APP` handle via `internal_data_path()`. The game stores its save under the app-private `astro-rust/` subdirectory. This does not require broad external-storage permissions and is not visible as a normal public Downloads folder. Desktop development uses a repository-local `saves/` directory.
