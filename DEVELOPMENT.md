@@ -49,7 +49,8 @@
 
 ## Milestone 4 — Persistence and optimization
 - [x] Versioned save/load with checksum, strict bounds, and atomic temporary-file replacement (not runtime verified).
-- [ ] Background lifecycle save on Android suspend and interrupted-save recovery.
+- [x] Save on the Bevy `WillSuspend` lifecycle message (source implemented; device verification pending).
+- [ ] Interrupted-save recovery after abrupt process termination.
 - [ ] Performance and memory telemetry.
 - [ ] Profiling on real Android hardware before raising visual defaults.
 
@@ -88,5 +89,5 @@ No builds, tests, APK packaging, or device profiling have been run. Terrain unit
 - Android resolves the app-private internal files directory through Bevy's Android application handle; desktop iteration uses a project-local `saves/` directory.
 - Edited chunk data is loaded into the lazy runtime edit cache, so distant saved chunks do not all need to become active terrain meshes at startup.
 - Autosave runs every 15 seconds when the terrain edit revision has changed; an app-exit save is also registered.
-- Current limitation: Android suspend/process-kill recovery still needs a lifecycle hook, so the periodic autosave is the primary protection against abrupt termination. The in-memory edit cache can still grow with the number of edited chunks during a very long session; a disk-backed per-chunk cache is a future memory optimization.
+- A save is also attempted on Bevy's `WillSuspend` lifecycle message, giving the app one final active frame to flush edits before background suspension. A forced process kill without a lifecycle callback can still lose edits made since the last successful save. The in-memory edit cache can still grow with the number of edited chunks during a very long session; a disk-backed per-chunk cache is a future memory optimization.
 - Save codec unit tests were added but not run. No build, test, APK, CI, or device validation was performed.
