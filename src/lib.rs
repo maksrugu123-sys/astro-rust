@@ -2,6 +2,7 @@ use bevy::prelude::*;
 
 mod planet;
 mod player;
+mod save_system;
 mod terrain;
 
 #[bevy_main]
@@ -24,9 +25,11 @@ pub fn run_app() {
     .init_resource::<player::TouchControls>()
     .init_resource::<player::CameraOrbit>()
     .init_resource::<terrain::TerrainWorld>()
+    .insert_resource(save_system::SaveStore::discover())
     .add_systems(
         Startup,
         (
+            save_system::load_saved_world,
             planet::spawn_test_planet,
             terrain::setup_terrain_material,
             terrain::generate_starting_chunks,
@@ -46,9 +49,11 @@ pub fn run_app() {
             player::apply_terrain_actions,
             terrain::stream_terrain_chunks,
             terrain::refresh_dirty_chunk_meshes,
+            save_system::autosave_world,
         )
             .chain(),
-    );
+    )
+    .add_systems(Last, save_system::save_world_on_exit);
 
     app.run();
 }
