@@ -24,6 +24,7 @@ pub fn run_app() {
     .insert_resource(WinitSettings::mobile())
     .init_resource::<player::TouchControls>()
     .init_resource::<player::CameraOrbit>()
+    .init_resource::<player::Inventory>()
     .init_resource::<terrain::TerrainWorld>()
     .init_resource::<terrain::TerrainGenerationQueue>()
     .insert_resource(save_system::SaveStore::discover())
@@ -48,6 +49,7 @@ pub fn run_app() {
             player::move_player_on_planet,
             player::update_follow_camera,
             player::apply_terrain_actions,
+            player::update_inventory_hud,
             terrain::stream_terrain_chunks,
             terrain::refresh_dirty_chunk_meshes,
             save_system::autosave_world,
