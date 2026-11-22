@@ -347,7 +347,7 @@ impl TerrainWorld {
         edited.into_iter().collect()
     }
 
-    /// Restores sparse v4 deltas and migrates legacy full-chunk saves in memory.
+    /// Restores validated sparse v4 deltas into the lazy-load edit cache.
     pub(crate) fn restore_saved_world(
         &mut self,
         seed: u64,
