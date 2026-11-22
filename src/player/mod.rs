@@ -58,6 +58,10 @@ impl Inventory {
         }
     }
 
+    pub(crate) fn snapshot(&self) -> [u16; 4] {
+        [self.regolith, self.rock, self.copper, self.iron]
+    }
+
     fn collect(&mut self, kind: VoxelKind) {
         let slot = match kind {
             VoxelKind::Regolith => &mut self.regolith,
@@ -70,14 +74,6 @@ impl Inventory {
     }
 }
 
-    #[test]
-    fn inventory_stops_mining_when_a_stack_is_full() {
-        let mut inventory = Inventory { regolith: 99, ..default() };
-        assert!(!inventory.can_collect(VoxelKind::Regolith));
-        assert!(inventory.can_collect(VoxelKind::CopperOre));
-        inventory.collect(VoxelKind::CopperOre);
-        assert_eq!(inventory.copper, 1);
-    }
 
 #[derive(Component)]
 struct InventoryHud;
@@ -534,5 +530,26 @@ pub fn apply_terrain_actions(
         {
             terrain.set_block(target, VoxelKind::Regolith);
         }
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inventory_stops_mining_when_a_stack_is_full() {
+        let mut inventory = Inventory { regolith: 99, ..default() };
+        assert!(!inventory.can_collect(VoxelKind::Regolith));
+        assert!(inventory.can_collect(VoxelKind::CopperOre));
+        inventory.collect(VoxelKind::CopperOre);
+        assert_eq!(inventory.copper, 1);
+    }
+
+    #[test]
+    fn inventory_snapshot_tracks_every_material() {
+        let inventory = Inventory { regolith: 1, rock: 2, copper: 3, iron: 4 };
+        assert_eq!(inventory.snapshot(), [1, 2, 3, 4]);
     }
 }
