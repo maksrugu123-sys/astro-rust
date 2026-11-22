@@ -103,3 +103,10 @@ Save format v5 uses a checksummed world manifest plus independently checksummed 
 Saving writes and flushes all new chunk records first, then atomically replaces the manifest as the commit point. Only after that commit are unreferenced chunk files removed. This means a crash during chunk writes leaves the previous manifest and its immutable records intact. On load, a bad or missing chunk is skipped and reported without rejecting other valid chunk records. Versions 1–4 are rejected; no legacy migration code remains.
 
 This is not yet a fully disk-backed lazy cache: startup currently reads all manifest-listed sparse deltas into `TerrainWorld`, and saving still creates a full sparse snapshot in memory. Chunk-file reads are currently synchronous during startup, and chunk writes are synchronous during autosave/suspend/exit. The next stage must add a bounded asynchronous disk cache/eviction queue so distant edits do not accumulate in RAM and file I/O does not block frame-critical work. Large-planet indexing and coordinate precision still need separate design before expanding world bounds.
+
+
+## Bounded chunk I/O groundwork
+
+A dedicated `ChunkIoQueue` now provides two named worker threads, a bounded request channel, a bounded completion channel that applies backpressure, duplicate-coordinate suppression, and bounded per-frame completion collection. Reads are capped before allocation and checked again after reading to handle files that grow during the operation. Worker panics are converted to failed read results. The queue returns raw bytes and does not bypass the v5 decoder's checksum, version, or coordinate validation.
+
+This queue is registered but not yet connected to terrain streaming or the v5 manifest index. The current runtime therefore still loads all edited chunk records synchronously at startup and writes saves synchronously. The next integration step must make the manifest index authoritative, request records only when their chunks enter the streaming neighborhood, keep generated chunks hidden until their disk edits have been validated, and preserve untouched manifest entries during incremental saves.
