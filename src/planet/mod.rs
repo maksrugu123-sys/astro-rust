@@ -22,7 +22,7 @@ pub fn spawn_test_planet(
     commands.spawn((
         DirectionalLight {
             illuminance: 18_000.0,
-            shadows_enabled: false,
+            shadow_maps_enabled: false,
             ..default()
         },
         Transform::from_rotation(Quat::from_euler(
