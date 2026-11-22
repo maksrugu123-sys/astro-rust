@@ -1,6 +1,10 @@
 //! Chunked voxel data and spherical terrain rendering for ASTRO-RUST.
 
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet, VecDeque},
+    sync::{mpsc, Mutex},
+    thread,
+};
 
 use bevy::{
     asset::RenderAssetUsages,
@@ -14,6 +18,7 @@ const SURFACE_NOISE_VOXELS: f32 = 1.35;
 const STREAM_RADIUS: i32 = 1;
 const MAX_LOADED_CHUNKS: usize = 40;
 const MAX_CHUNK_LOADS_PER_FRAME: usize = 2;
+const MAX_PENDING_CHUNK_GENERATIONS: usize = 4;
 const MAX_CHUNK_UNLOADS_PER_FRAME: usize = 4;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -51,6 +56,108 @@ impl ChunkCoord {
         IVec3::new(self.x, self.y, self.z) * CHUNK_SIZE
     }
 }
+
+fn chunk_neighbors(coord: ChunkCoord) -> [ChunkCoord; 6] {
+    [
+        ChunkCoord { x: coord.x.saturating_sub(1), y: coord.y, z: coord.z },
+        ChunkCoord { x: coord.x.saturating_add(1), y: coord.y, z: coord.z },
+        ChunkCoord { x: coord.x, y: coord.y.saturating_sub(1), z: coord.z },
+        ChunkCoord { x: coord.x, y: coord.y.saturating_add(1), z: coord.z },
+        ChunkCoord { x: coord.x, y: coord.y, z: coord.z.saturating_sub(1) },
+        ChunkCoord { x: coord.x, y: coord.y, z: coord.z.saturating_add(1) },
+    ]
+}
+
+fn surface_noise(seed: u64, voxel: IVec3) -> f32 {
+    let mut value = seed
+        ^ (voxel.x as i64 as u64).wrapping_mul(0x9E37_79B1_85EB_CA87)
+        ^ (voxel.y as i64 as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F)
+        ^ (voxel.z as i64 as u64).wrapping_mul(0x1656_67B1_9E37_79F9);
+    value ^= value >> 30;
+    value = value.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    value ^= value >> 27;
+    value = value.wrapping_mul(0x94D0_49BB_1331_11EB);
+    value ^= value >> 31;
+    ((value >> 40) as f32 / ((1_u32 << 24) - 1) as f32) * 2.0 - 1.0
+}
+
+/// Pure chunk generation: safe to execute on a worker without touching Bevy assets.
+fn generate_chunk(coord: ChunkCoord, seed: u64, voxel_size: f32, base_radius: f32) -> VoxelChunk {
+    let mut chunk = VoxelChunk::default();
+    let origin = coord.origin();
+    for z in 0..CHUNK_SIZE {
+        for y in 0..CHUNK_SIZE {
+            for x in 0..CHUNK_SIZE {
+                let local = IVec3::new(x, y, z);
+                let voxel = origin + local;
+                let center = (voxel.as_vec3() + Vec3::splat(0.5)) * voxel_size;
+                let distance = center.length();
+                let noise = surface_noise(seed, voxel) * SURFACE_NOISE_VOXELS * voxel_size;
+                let surface_radius = base_radius + noise;
+                if distance <= surface_radius {
+                    let depth = surface_radius - distance;
+                    let kind = if depth > voxel_size * 2.5 {
+                        VoxelKind::Rock
+                    } else {
+                        VoxelKind::Regolith
+                    };
+                    let _ = chunk.set(local, kind);
+                }
+            }
+        }
+    }
+    // Worker generation is deterministic world data, not a gameplay edit.
+    chunk.edited = false;
+    chunk.mesh_dirty = true;
+    chunk
+}
+
+#[derive(Resource)]
+pub struct TerrainGenerationQueue {
+    sender: mpsc::Sender<(ChunkCoord, VoxelChunk)>,
+    receiver: Mutex<mpsc::Receiver<(ChunkCoord, VoxelChunk)>>,
+    pending: HashSet<ChunkCoord>,
+    ready: VecDeque<(ChunkCoord, VoxelChunk)>,
+}
+
+impl Default for TerrainGenerationQueue {
+    fn default() -> Self {
+        let (sender, receiver) = mpsc::channel();
+        Self {
+            sender,
+            receiver: Mutex::new(receiver),
+            pending: HashSet::new(),
+            ready: VecDeque::new(),
+        }
+    }
+}
+
+impl TerrainGenerationQueue {
+    fn request(&mut self, coord: ChunkCoord, seed: u64, voxel_size: f32, base_radius: f32) {
+        if !self.pending.insert(coord) {
+            return;
+        }
+        let sender = self.sender.clone();
+        thread::spawn(move || {
+            let chunk = generate_chunk(coord, seed, voxel_size, base_radius);
+            let _ = sender.send((coord, chunk));
+        });
+    }
+
+    fn collect_completed(&mut self) {
+        let Ok(receiver) = self.receiver.lock() else {
+            return;
+        };
+        while let Ok(result) = receiver.try_recv() {
+            self.ready.push_back(result);
+        }
+    }
+
+    fn finish(&mut self, coord: ChunkCoord) {
+        self.pending.remove(&coord);
+    }
+}
+
 
 #[derive(Clone, Debug)]
 pub struct VoxelChunk {
@@ -210,53 +317,23 @@ impl TerrainWorld {
         if self.chunks.contains_key(&coord) {
             return;
         }
+        let generated = generate_chunk(coord, self.seed, self.voxel_size, self.base_radius);
+        self.insert_generated_chunk(coord, generated);
+    }
 
-        let mut chunk = VoxelChunk::default();
-        let origin = coord.origin();
-
-        for z in 0..CHUNK_SIZE {
-            for y in 0..CHUNK_SIZE {
-                for x in 0..CHUNK_SIZE {
-                    let voxel = origin + IVec3::new(x, y, z);
-                    let center = (voxel.as_vec3() + Vec3::splat(0.5)) * self.voxel_size;
-                    let distance = center.length();
-                    let noise = self.surface_noise(voxel) * SURFACE_NOISE_VOXELS * self.voxel_size;
-                    let surface_radius = self.base_radius + noise;
-
-                    if distance <= surface_radius {
-                        let depth = surface_radius - distance;
-                        let kind = if depth > self.voxel_size * 2.5 {
-                            VoxelKind::Rock
-                        } else {
-                            VoxelKind::Regolith
-                        };
-                        let _ = chunk.set(IVec3::new(x, y, z), kind);
-                    }
-                }
-            }
+    fn insert_generated_chunk(&mut self, coord: ChunkCoord, mut chunk: VoxelChunk) {
+        if self.chunks.contains_key(&coord) {
+            return;
         }
-
-        // Procedural generation is not a gameplay edit.
-        chunk.edited = false;
-        // Reapply player edits after deterministic regeneration.
         if let Some(saved_blocks) = self.edited_cache.remove(&coord) {
             if saved_blocks.len() == CHUNK_VOLUME {
                 chunk.blocks = saved_blocks;
                 chunk.edited = true;
             }
         }
-        // Initial generation is not a gameplay edit.
         chunk.mesh_dirty = true;
         self.chunks.insert(coord, chunk);
-
-        for neighbor in [
-            ChunkCoord { x: coord.x - 1, y: coord.y, z: coord.z },
-            ChunkCoord { x: coord.x + 1, y: coord.y, z: coord.z },
-            ChunkCoord { x: coord.x, y: coord.y - 1, z: coord.z },
-            ChunkCoord { x: coord.x, y: coord.y + 1, z: coord.z },
-            ChunkCoord { x: coord.x, y: coord.y, z: coord.z - 1 },
-            ChunkCoord { x: coord.x, y: coord.y, z: coord.z + 1 },
-        ] {
+        for neighbor in chunk_neighbors(coord) {
             if let Some(chunk) = self.chunks.get_mut(&neighbor) {
                 chunk.mesh_dirty = true;
             }
@@ -449,16 +526,7 @@ impl TerrainWorld {
     }
 
     fn surface_noise(&self, voxel: IVec3) -> f32 {
-        let mut value = self.seed
-            ^ (voxel.x as i64 as u64).wrapping_mul(0x9E37_79B1_85EB_CA87)
-            ^ (voxel.y as i64 as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F)
-            ^ (voxel.z as i64 as u64).wrapping_mul(0x1656_67B1_9E37_79F9);
-        value ^= value >> 30;
-        value = value.wrapping_mul(0xBF58_476D_1CE4_E5B9);
-        value ^= value >> 27;
-        value = value.wrapping_mul(0x94D0_49BB_1331_11EB);
-        value ^= value >> 31;
-        ((value >> 40) as f32 / ((1_u32 << 24) - 1) as f32) * 2.0 - 1.0
+        surface_noise(self.seed, voxel)
     }
 }
 
@@ -527,6 +595,7 @@ pub fn stream_terrain_chunks(
     mut commands: Commands,
     player_query: Query<&Transform, With<crate::player::PlanetPlayer>>,
     mut terrain: ResMut<TerrainWorld>,
+    mut generation: ResMut<TerrainGenerationQueue>,
     mut meshes: ResMut<Assets<Mesh>>,
     material: Res<TerrainMaterial>,
     visuals: Query<(Entity, &TerrainChunkVisual)>,
@@ -541,9 +610,9 @@ pub fn stream_terrain_chunks(
         for y in -STREAM_RADIUS..=STREAM_RADIUS {
             for x in -STREAM_RADIUS..=STREAM_RADIUS {
                 desired.insert(ChunkCoord {
-                    x: center.x + x,
-                    y: center.y + y,
-                    z: center.z + z,
+                    x: center.x.saturating_add(x),
+                    y: center.y.saturating_add(y),
+                    z: center.z.saturating_add(z),
                 });
             }
         }
@@ -560,26 +629,26 @@ pub fn stream_terrain_chunks(
         terrain.unload_chunk(coord);
     }
 
-    let mut load_order: Vec<ChunkCoord> = desired.iter().copied().collect();
-    load_order.sort_by_key(|coord| {
-        let dx = (coord.x - center.x) as i64;
-        let dy = (coord.y - center.y) as i64;
-        let dz = (coord.z - center.z) as i64;
-        dx * dx + dy * dy + dz * dz
-    });
-
-    let mut loaded_this_frame = 0;
-    for coord in load_order {
-        if loaded_this_frame >= MAX_CHUNK_LOADS_PER_FRAME
-            || terrain.loaded_chunk_count() >= MAX_LOADED_CHUNKS
-        {
+    generation.collect_completed();
+    let ready_count = generation.ready.len();
+    let mut applied = 0;
+    for _ in 0..ready_count {
+        let Some((coord, chunk)) = generation.ready.pop_front() else {
             break;
+        };
+        if !desired.contains(&coord) {
+            generation.finish(coord);
+            continue;
         }
+        if terrain.loaded_chunk_count() >= MAX_LOADED_CHUNKS || applied >= MAX_CHUNK_LOADS_PER_FRAME {
+            generation.ready.push_back((coord, chunk));
+            continue;
+        }
+        generation.finish(coord);
         if terrain.contains_chunk(coord) {
             continue;
         }
-
-        terrain.ensure_chunk(coord);
+        terrain.insert_generated_chunk(coord, chunk);
         let mesh = build_chunk_mesh(&terrain, coord);
         let handle = meshes.add(mesh);
         if let Some(chunk) = terrain.chunks.get_mut(&coord) {
@@ -592,7 +661,29 @@ pub fn stream_terrain_chunks(
             TerrainChunkVisual { coord, mesh: handle },
             Name::new(format!("Terrain Chunk {},{},{}", coord.x, coord.y, coord.z)),
         ));
-        loaded_this_frame += 1;
+        applied += 1;
+    }
+
+    let mut load_order: Vec<ChunkCoord> = desired.iter().copied().collect();
+    load_order.sort_by_key(|coord| {
+        let dx = coord.x as i64 - center.x as i64;
+        let dy = coord.y as i64 - center.y as i64;
+        let dz = coord.z as i64 - center.z as i64;
+        (dx * dx + dy * dy + dz * dz, coord.x, coord.y, coord.z)
+    });
+
+    let mut requested = 0;
+    for coord in load_order {
+        if requested >= MAX_CHUNK_LOADS_PER_FRAME
+            || generation.pending.len() >= MAX_PENDING_CHUNK_GENERATIONS
+        {
+            break;
+        }
+        if terrain.contains_chunk(coord) || generation.pending.contains(&coord) {
+            continue;
+        }
+        generation.request(coord, terrain.seed, terrain.voxel_size, terrain.base_radius);
+        requested += 1;
     }
 }
 
