@@ -6,6 +6,8 @@ use std::{
     thread,
 };
 
+use crate::{chunk_io::ChunkIoQueue, save_system::SaveStore};
+
 use bevy::{
     asset::RenderAssetUsages,
     mesh::{Indices, PrimitiveTopology},
@@ -296,6 +298,7 @@ pub(crate) type SavedChunkData = Vec<(u16, VoxelKind)>;
 pub struct TerrainWorld {
     chunks: HashMap<ChunkCoord, VoxelChunk>,
     edited_cache: HashMap<ChunkCoord, Vec<(u16, VoxelKind)>>,
+    disk_pending: HashSet<ChunkCoord>,
     edit_revision: u64,
     pub seed: u64,
     pub voxel_size: f32,
@@ -313,6 +316,7 @@ impl TerrainWorld {
         Self {
             chunks: HashMap::new(),
             edited_cache: HashMap::new(),
+            disk_pending: HashSet::new(),
             edit_revision: 0,
             seed,
             voxel_size: voxel_size.max(0.01),
@@ -347,29 +351,50 @@ impl TerrainWorld {
         edited.into_iter().collect()
     }
 
-    /// Restores validated sparse v4 deltas into the lazy-load edit cache.
-    pub(crate) fn restore_saved_world(
+    /// Installs only the manifest index. Chunk payloads remain on disk until streamed.
+    pub(crate) fn restore_saved_world_index(
         &mut self,
         seed: u64,
         voxel_size: f32,
         base_radius: f32,
-        chunks: Vec<(ChunkCoord, SavedChunkData)>,
+        saved_coords: impl IntoIterator<Item = ChunkCoord>,
     ) {
         self.seed = seed;
         self.voxel_size = voxel_size;
         self.base_radius = base_radius;
         self.chunks.clear();
         self.edited_cache.clear();
-        for (coord, data) in chunks {
-            if !coord.is_representable() {
-                continue;
-            }
-            let edits = data;
-            if !edits.is_empty() {
-                self.edited_cache.insert(coord, edits);
-            }
-        }
+        self.disk_pending.clear();
+        self.disk_pending.extend(saved_coords.into_iter().filter(|coord| coord.is_representable()));
         self.edit_revision = 1;
+    }
+
+    /// Makes already-validated disk edits available for the next deterministic generation.
+    pub(crate) fn cache_saved_chunk_edits(
+        &mut self,
+        coord: ChunkCoord,
+        edits: SavedChunkData,
+    ) {
+        if !coord.is_representable() {
+            return;
+        }
+        self.disk_pending.remove(&coord);
+        if !edits.is_empty() {
+            self.edited_cache.insert(coord, edits);
+        }
+    }
+
+    pub(crate) fn is_chunk_disk_pending(&self, coord: ChunkCoord) -> bool {
+        self.disk_pending.contains(&coord)
+    }
+
+    pub(crate) fn is_chunk_loaded(&self, coord: ChunkCoord) -> bool {
+        self.chunks.contains_key(&coord)
+    }
+
+    pub(crate) fn is_chunk_edited(&self, coord: ChunkCoord) -> bool {
+        self.chunks.get(&coord).is_some_and(|chunk| chunk.edited)
+            || self.edited_cache.contains_key(&coord)
     }
 
     pub fn chunk(&self, coord: ChunkCoord) -> Option<&VoxelChunk> {
@@ -397,7 +422,10 @@ impl TerrainWorld {
     }
 
     pub fn ensure_chunk(&mut self, coord: ChunkCoord) {
-        if !coord.is_representable() || self.chunks.contains_key(&coord) {
+        if !coord.is_representable()
+            || self.chunks.contains_key(&coord)
+            || self.disk_pending.contains(&coord)
+        {
             return;
         }
         let generated = generate_chunk(coord, self.seed, self.voxel_size, self.base_radius);
@@ -676,6 +704,8 @@ pub fn stream_terrain_chunks(
     player_query: Query<&Transform, With<crate::player::PlanetPlayer>>,
     mut terrain: ResMut<TerrainWorld>,
     mut generation: ResMut<TerrainGenerationQueue>,
+    mut chunk_io: ResMut<ChunkIoQueue>,
+    mut save_store: ResMut<SaveStore>,
     mut meshes: ResMut<Assets<Mesh>>,
     material: Res<TerrainMaterial>,
     visuals: Query<(Entity, &TerrainChunkVisual)>,
@@ -763,6 +793,11 @@ pub fn stream_terrain_chunks(
             break;
         }
         if terrain.contains_chunk(coord) || generation.pending.contains(&coord) {
+            continue;
+        }
+        if save_store.request_saved_chunk(coord, &mut chunk_io)
+            || terrain.is_chunk_disk_pending(coord)
+        {
             continue;
         }
         generation.request(coord, terrain.seed, terrain.voxel_size, terrain.base_radius);
