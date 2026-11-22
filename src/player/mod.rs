@@ -1,18 +1,25 @@
-//! Kinematic player and mobile controls for spherical planets.
+//! Radial-gravity player physics and mobile controls for spherical planets.
 
 use bevy::{input::mouse::AccumulatedMouseMotion, prelude::*};
 
 pub mod math;
 
 use crate::planet::math::surface_normal;
-use math::tangent_frame;
+use math::{radial_gravity, resolve_spherical_contact, tangent_frame};
 
 const PLANET_RADIUS: f32 = 3.0;
 const PLAYER_SURFACE_OFFSET: f32 = 0.62;
-const MOVE_SPEED: f32 = 2.8;
+const SURFACE_RADIUS: f32 = PLANET_RADIUS + PLAYER_SURFACE_OFFSET;
+const MOVE_ACCELERATION: f32 = 18.0;
+const MAX_GROUND_SPEED: f32 = 3.0;
+const MAX_AIR_SPEED: f32 = 3.4;
+const GROUND_FRICTION: f32 = 7.0;
+const GRAVITY_STRENGTH: f32 = 9.8;
+const JUMP_SPEED: f32 = 5.2;
 const JOYSTICK_RADIUS: f32 = 58.0;
 const LOOK_SENSITIVITY: f32 = 0.005;
 const CAMERA_DISTANCE: f32 = 5.4;
+const MAX_PHYSICS_STEP: f32 = 0.05;
 
 #[derive(Component)]
 struct PlanetPlayer;
@@ -21,13 +28,20 @@ struct PlanetPlayer;
 struct PlayerHeading(Vec3);
 
 #[derive(Component)]
+struct PlayerMotion {
+    velocity: Vec3,
+    grounded: bool,
+}
+
+#[derive(Component)]
 struct JoystickThumb;
 
-/// Normalized movement input and per-frame camera drag, populated from touch.
+/// Normalized movement input, camera drag, and held jump state from touch.
 #[derive(Resource, Default)]
 pub struct TouchControls {
     movement: Vec2,
     look_delta: Vec2,
+    jump_pressed: bool,
 }
 
 /// Camera orbit is expressed relative to the player's local surface frame.
@@ -51,7 +65,7 @@ pub fn spawn_player(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let start_position = Vec3::Y * (PLANET_RADIUS + PLAYER_SURFACE_OFFSET);
+    let start_position = Vec3::Y * SURFACE_RADIUS;
 
     commands.spawn((
         Mesh3d(meshes.add(Capsule3d::new(0.22, 0.8))),
@@ -67,6 +81,10 @@ pub fn spawn_player(
         },
         PlanetPlayer,
         PlayerHeading(Vec3::Z),
+        PlayerMotion {
+            velocity: Vec3::ZERO,
+            grounded: true,
+        },
         Name::new("Player"),
     ));
 
@@ -79,7 +97,7 @@ pub fn spawn_player(
     ));
 }
 
-/// Draws a fixed virtual joystick in the lower-left corner.
+/// Draws the movement joystick and a separate jump touch target.
 pub fn spawn_touch_hud(mut commands: Commands) {
     commands.spawn((
         Node {
@@ -111,10 +129,36 @@ pub fn spawn_touch_hud(mut commands: Commands) {
         BackgroundColor(Color::srgba(0.76, 0.86, 0.96, 0.78)),
         Name::new("Movement Joystick Thumb"),
     ));
+
+    commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            right: Val::Px(28.0),
+            bottom: Val::Px(32.0),
+            width: Val::Px(112.0),
+            height: Val::Px(76.0),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            border: UiRect::all(Val::Px(2.0)),
+            border_radius: BorderRadius::MAX,
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.92, 0.42, 0.16, 0.72)),
+        BorderColor::all(Color::srgba(1.0, 0.82, 0.62, 0.9)),
+        children![(
+            Text::new("JUMP"),
+            TextFont {
+                font_size: 19.0,
+                ..default()
+            },
+            TextColor(Color::WHITE),
+        )],
+        Name::new("Jump Button"),
+    ));
 }
 
-/// The left touch zone drives movement; touches on the right side rotate the view.
-/// A second finger can control the camera while the first remains on the joystick.
+/// Left touch zone moves; right touch zone rotates the camera. The lower-right
+/// jump target is excluded from camera drag, so movement, look, and jump coexist.
 pub fn read_touch_controls(
     touches: Res<Touches>,
     windows: Query<&Window, With<PrimaryWindow>>,
@@ -123,6 +167,7 @@ pub fn read_touch_controls(
 ) {
     controls.movement = Vec2::ZERO;
     controls.look_delta = Vec2::ZERO;
+    controls.jump_pressed = false;
 
     let Ok(window) = windows.single() else {
         return;
@@ -134,11 +179,15 @@ pub fn read_touch_controls(
 
     for touch in touches.iter() {
         let start = touch.start_position();
+        let position = touch.position();
+        let jump_zone = start.x >= size.x - 160.0 && start.y >= size.y - 130.0;
 
-        if start.x <= 210.0 && start.y >= size.y - 210.0 && !joystick_active {
+        if jump_zone {
+            controls.jump_pressed = true;
+        } else if start.x <= 210.0 && start.y >= size.y - 210.0 && !joystick_active {
             let displacement = Vec2::new(
-                touch.position().x - joystick_center.x,
-                joystick_center.y - touch.position().y,
+                position.x - joystick_center.x,
+                joystick_center.y - position.y,
             );
             controls.movement = (displacement / JOYSTICK_RADIUS).clamp_length_max(1.0);
             joystick_active = true;
@@ -170,17 +219,26 @@ pub fn update_orbit_state(
     orbit.pitch = (orbit.pitch - delta.y * LOOK_SENSITIVITY).clamp(-0.18, 1.12);
 }
 
-/// Moves along the sphere using camera-relative tangent directions.
+/// Integrates movement, radial gravity, jumping, and spherical ground contact.
+/// The timestep is capped to reduce instability after a long mobile frame.
 pub fn move_player_on_planet(
     time: Res<Time>,
     keyboard: Res<ButtonInput<KeyCode>>,
     controls: Res<TouchControls>,
     orbit: Res<CameraOrbit>,
-    mut player_query: Query<(&mut Transform, &mut PlayerHeading), With<PlanetPlayer>>,
+    mut player_query: Query<
+        (&mut Transform, &mut PlayerHeading, &mut PlayerMotion),
+        With<PlanetPlayer>,
+    >,
 ) {
-    let Ok((mut player_transform, mut heading)) = player_query.single_mut() else {
+    let Ok((mut player_transform, mut heading, mut motion)) = player_query.single_mut() else {
         return;
     };
+
+    let dt = time.delta_secs().clamp(0.0, MAX_PHYSICS_STEP);
+    if dt <= 0.0 {
+        return;
+    }
 
     let Some(frame) = tangent_frame(player_transform.translation, heading.0) else {
         return;
@@ -201,13 +259,50 @@ pub fn move_player_on_planet(
     let view_forward = yaw * frame.forward;
     let view_right = yaw * frame.right;
     let direction = view_right * movement.x + view_forward * movement.y;
+    let has_movement = direction.length_squared() > 1.0e-6;
 
-    if direction.length_squared() > 1.0e-6 {
-        player_transform.translation = (player_transform.translation
-            + direction.normalize() * MOVE_SPEED * time.delta_secs())
-            .normalize()
-            * (PLANET_RADIUS + PLAYER_SURFACE_OFFSET);
+    if motion.grounded {
+        motion.velocity -= frame.up * motion.velocity.dot(frame.up);
     }
+
+    if has_movement {
+        motion.velocity += direction.normalize() * MOVE_ACCELERATION * dt;
+    } else if motion.grounded {
+        let damping = (-GROUND_FRICTION * dt).exp();
+        motion.velocity *= damping;
+    }
+
+    let jump_requested =
+        controls.jump_pressed || keyboard.just_pressed(KeyCode::Space);
+    if jump_requested && motion.grounded {
+        motion.velocity += frame.up * JUMP_SPEED;
+        motion.grounded = false;
+    }
+
+    if let Some(gravity) = radial_gravity(player_transform.translation, GRAVITY_STRENGTH) {
+        motion.velocity += gravity * dt;
+    }
+
+    let speed_limit = if motion.grounded {
+        MAX_GROUND_SPEED
+    } else {
+        MAX_AIR_SPEED
+    };
+    let radial_speed = motion.velocity.dot(frame.up);
+    let tangent_velocity = motion.velocity - frame.up * radial_speed;
+    let limited_tangent = tangent_velocity.clamp_length_max(speed_limit);
+    motion.velocity = limited_tangent + frame.up * radial_speed;
+
+    player_transform.translation += motion.velocity * dt;
+
+    let (position, velocity, grounded) = resolve_spherical_contact(
+        player_transform.translation,
+        motion.velocity,
+        SURFACE_RADIUS,
+    );
+    player_transform.translation = position;
+    motion.velocity = velocity;
+    motion.grounded = grounded;
 
     if let Some(up) = surface_normal(player_transform.translation) {
         if let Some(updated_frame) = tangent_frame(player_transform.translation, heading.0) {
