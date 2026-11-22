@@ -96,7 +96,7 @@ No builds, tests, APK packaging, or device profiling have been run. Terrain, gre
 - Saves are written to a temporary file, flushed, then renamed over the previous save.
 - Android resolves the app-private internal files directory through Bevy's Android application handle; desktop iteration uses a project-local `saves/` directory.
 - Edited chunk data is loaded into the lazy runtime edit cache, so distant saved chunks do not all need to become active terrain meshes at startup.
-- Autosave runs every 15 seconds when the terrain edit revision has changed; an app-exit save is also registered.
+- Autosave runs every 15 seconds when either the terrain edit revision or the four-slot inventory snapshot has changed; suspend and app-exit saves use the same combined dirty check.
 - A save is also attempted on Bevy's `WillSuspend` lifecycle message, giving the app one final active frame to flush edits before background suspension. A forced process kill without a lifecycle callback can still lose edits made since the last successful save. The in-memory edit cache can still grow with the number of edited chunks during a very long session; a disk-backed per-chunk cache is a future memory optimization.
 - Save codec unit tests were added but not run. No build, test, APK, CI, or device validation was performed.
 
@@ -146,3 +146,12 @@ No builds, tests, APK packaging, or device profiling have been run. Terrain, gre
 - Mining now refuses to destroy a block when its corresponding inventory stack is already at 99, preventing silent resource loss.
 - Surface noise and ore-vein placement share one deterministic integer hash implementation.
 - Added source-level coverage for version-1 save migration and inventory stack capacity; neither test has been run.
+
+
+### Persistence and coordinate hardening follow-up
+
+- Save dirty-state tracking now includes inventory contents as well as terrain edits, so future inventory-only operations (such as crafting or transfers) cannot be missed by autosave, suspend, or exit persistence.
+- Inventory snapshots are centralized in the inventory resource and covered by a focused source-level test.
+- Chunk-neighbor invalidation and DDA stepping use saturating coordinate arithmetic at integer limits.
+- Chunk coordinates restored from saves are restricted to ranges that can be represented by signed 32-bit voxel coordinates; invalid external chunk coordinates are ignored by the runtime loader.
+- Added boundary-focused tests. They have not been run; no build, APK, CI, or device validation was performed.
