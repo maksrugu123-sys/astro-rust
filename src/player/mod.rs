@@ -526,8 +526,10 @@ pub fn apply_terrain_actions(
         let target = voxel + face_normal;
         let target_center = (target.as_vec3() + Vec3::splat(0.5)) * terrain.voxel_size;
         if target_center.distance(player.translation) >= 0.95
-            && !terrain.get_block(target).is_some_and(VoxelKind::is_solid)
+            && terrain.get_block(target).is_some_and(|kind| !kind.is_solid())
         {
+            // Do not let placement synchronously create an unloaded chunk:
+            // streaming owns chunk creation and visual-entity registration.
             terrain.set_block(target, VoxelKind::Regolith);
         }
     }
