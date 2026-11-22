@@ -56,7 +56,7 @@ impl Inventory {
             VoxelKind::IronOre => &mut self.iron,
             VoxelKind::Air => return,
         };
-        *slot = slot.saturating_add(1).min(99);
+        *slot = (*slot).saturating_add(1).min(99);
     }
 }
 
