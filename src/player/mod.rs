@@ -48,7 +48,7 @@ pub fn spawn_player(
 }
 
 /// Keyboard input is a temporary desktop-prototype control scheme.
-/// The same surface movement function will be reused by Android touch controls.
+/// The same surface movement math will be reused by Android touch controls.
 pub fn move_player_on_planet(
     time: Res<Time>,
     keyboard: Res<ButtonInput<KeyCode>>,
@@ -59,29 +59,33 @@ pub fn move_player_on_planet(
         return;
     };
 
-    let position = player_transform.translation;
-    let Some(frame) = tangent_frame(position, Vec3::Z) else {
+    let Some(frame) = tangent_frame(player_transform.translation, Vec3::Z) else {
         return;
     };
 
-    let horizontal = f32::from(keyboard.pressed(KeyCode::KeyD))
-        - f32::from(keyboard.pressed(KeyCode::KeyA));
-    let vertical = f32::from(keyboard.pressed(KeyCode::KeyW))
-        - f32::from(keyboard.pressed(KeyCode::KeyS));
+    let horizontal = if keyboard.pressed(KeyCode::KeyD) { 1.0 } else { 0.0 }
+        - if keyboard.pressed(KeyCode::KeyA) { 1.0 } else { 0.0 };
+    let vertical = if keyboard.pressed(KeyCode::KeyW) { 1.0 } else { 0.0 }
+        - if keyboard.pressed(KeyCode::KeyS) { 1.0 } else { 0.0 };
 
     let input = frame.right * horizontal + frame.forward * vertical;
     if input.length_squared() > 1.0e-6 {
         let direction = input.normalize();
-        let next_position = (position + direction * MOVE_SPEED * time.delta_secs())
+        player_transform.translation = (player_transform.translation
+            + direction * MOVE_SPEED * time.delta_secs())
             .normalize()
             * (PLANET_RADIUS + PLAYER_SURFACE_OFFSET);
-        player_transform.translation = next_position;
     }
 
     if let Some(up) = surface_normal(player_transform.translation) {
         player_transform.rotation = Quat::from_rotation_arc(Vec3::Y, up);
-        if let Ok(mut camera_transform) = camera_query.single_mut() {
-            let camera_position = player_transform.translation + up * 2.4 - frame.forward * 4.8;
+
+        if let (Some(updated_frame), Ok(mut camera_transform)) = (
+            tangent_frame(player_transform.translation, Vec3::Z),
+            camera_query.single_mut(),
+        ) {
+            let camera_position =
+                player_transform.translation + up * 2.4 - updated_frame.forward * 4.8;
             *camera_transform = Transform::from_translation(camera_position)
                 .looking_at(player_transform.translation + up * 0.55, up);
         }
