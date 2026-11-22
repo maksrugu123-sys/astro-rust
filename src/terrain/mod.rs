@@ -261,8 +261,8 @@ impl TerrainWorld {
         last_solid
     }
 
-    /// Finds the first solid voxel along a world-space ray using bounded sampling.
-    /// Returns the voxel coordinate and the approximate outward face normal.
+    /// Finds the first solid voxel along a world-space ray using 3D DDA traversal.
+    /// Returns the voxel coordinate and the exact axis-aligned entry-face normal.
     pub fn raycast_solid(
         &self,
         origin: Vec3,
@@ -273,29 +273,76 @@ impl TerrainWorld {
             return None;
         }
         let direction = direction.try_normalize()?;
-        let step = (self.voxel_size * 0.35).max(0.025);
-        let mut distance = 0.0;
-        let mut previous_position = origin;
+        let size = self.voxel_size;
+        let start = (origin / size).floor().as_ivec3();
+        let mut cell = [start.x, start.y, start.z];
+        let dir = [direction.x, direction.y, direction.z];
+        let origin_axis = [origin.x, origin.y, origin.z];
+        let mut step = [0_i32; 3];
+        let mut t_max = [f32::INFINITY; 3];
+        let mut t_delta = [f32::INFINITY; 3];
 
-        while distance <= max_distance {
-            let position = origin + direction * distance;
-            let voxel = (position / self.voxel_size).floor().as_ivec3();
-            if self.get_block(voxel).is_some_and(VoxelKind::is_solid) {
-                let center = (voxel.as_vec3() + Vec3::splat(0.5)) * self.voxel_size;
-                let delta = previous_position - center;
-                let normal = if delta.x.abs() >= delta.y.abs() && delta.x.abs() >= delta.z.abs() {
-                    IVec3::new(delta.x.signum() as i32, 0, 0)
-                } else if delta.y.abs() >= delta.z.abs() {
-                    IVec3::new(0, delta.y.signum() as i32, 0)
-                } else {
-                    IVec3::new(0, 0, delta.z.signum() as i32)
-                };
-                return Some((voxel, if normal == IVec3::ZERO { -direction.round().as_ivec3() } else { normal }));
+        for axis in 0..3 {
+            if dir[axis] > 0.0 {
+                step[axis] = 1;
+                let boundary = (cell[axis] + 1) as f32 * size;
+                t_max[axis] = (boundary - origin_axis[axis]) / dir[axis];
+                t_delta[axis] = size / dir[axis];
+            } else if dir[axis] < 0.0 {
+                step[axis] = -1;
+                let boundary = cell[axis] as f32 * size;
+                t_max[axis] = (boundary - origin_axis[axis]) / dir[axis];
+                t_delta[axis] = -size / dir[axis];
             }
-            previous_position = position;
-            distance += step;
         }
-        None
+
+        let mut distance = 0.0;
+        let mut entry_normal = IVec3::ZERO;
+        loop {
+            let voxel = IVec3::new(cell[0], cell[1], cell[2]);
+            if self.get_block(voxel).is_some_and(VoxelKind::is_solid) {
+                if entry_normal == IVec3::ZERO {
+                    let axis = if direction.x.abs() >= direction.y.abs()
+                        && direction.x.abs() >= direction.z.abs()
+                    {
+                        0
+                    } else if direction.y.abs() >= direction.z.abs() {
+                        1
+                    } else {
+                        2
+                    };
+                    let mut fallback = IVec3::ZERO;
+                    match axis {
+                        0 => fallback.x = -direction.x.signum() as i32,
+                        1 => fallback.y = -direction.y.signum() as i32,
+                        _ => fallback.z = -direction.z.signum() as i32,
+                    }
+                    entry_normal = fallback;
+                }
+                return Some((voxel, entry_normal));
+            }
+
+            let axis = if t_max[0] <= t_max[1] && t_max[0] <= t_max[2] {
+                0
+            } else if t_max[1] <= t_max[2] {
+                1
+            } else {
+                2
+            };
+            distance = t_max[axis];
+            if !distance.is_finite() || distance > max_distance {
+                return None;
+            }
+
+            cell[axis] += step[axis];
+            entry_normal = IVec3::ZERO;
+            match axis {
+                0 => entry_normal.x = -step[axis],
+                1 => entry_normal.y = -step[axis],
+                _ => entry_normal.z = -step[axis],
+            }
+            t_max[axis] += t_delta[axis];
+        }
     }
 
     pub fn sphere_touches_ground(&self, center: Vec3, body_radius: f32) -> bool {
