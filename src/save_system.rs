@@ -25,6 +25,7 @@ const AUTOSAVE_SECONDS: f32 = 15.0;
 pub struct SaveStore {
     directory: Option<PathBuf>,
     last_saved_revision: Option<u64>,
+    last_saved_inventory: Option<[u16; 4]>,
     timer: Timer,
 }
 
@@ -49,6 +50,7 @@ impl SaveStore {
                 }
             }),
             last_saved_revision: None,
+            last_saved_inventory: None,
             timer: Timer::from_seconds(AUTOSAVE_SECONDS, TimerMode::Repeating),
         }
     }
@@ -145,12 +147,16 @@ pub fn autosave_world(
 ) {
     store.timer.tick(time.delta());
     let revision = terrain.edit_revision();
-    if !store.timer.just_finished() || store.last_saved_revision == Some(revision) {
+    let inventory_snapshot = inventory.snapshot();
+    let world_is_current = store.last_saved_revision == Some(revision)
+        && store.last_saved_inventory == Some(inventory_snapshot);
+    if !store.timer.just_finished() || world_is_current {
         return;
     }
     match store.save(&terrain, &inventory) {
         Ok(()) => {
             store.last_saved_revision = Some(revision);
+            store.last_saved_inventory = Some(inventory_snapshot);
             info!("ASTRO-RUST world autosaved");
         }
         Err(error) => warn!("ASTRO-RUST autosave failed: {error}"),
@@ -167,12 +173,17 @@ pub fn save_world_on_suspend(
     let should_save = lifecycle
         .read()
         .any(|state| matches!(state, bevy::window::AppLifecycle::WillSuspend));
-    if !should_save || store.last_saved_revision == Some(terrain.edit_revision()) {
+    let inventory_snapshot = inventory.snapshot();
+    if !should_save
+        || (store.last_saved_revision == Some(terrain.edit_revision())
+            && store.last_saved_inventory == Some(inventory_snapshot))
+    {
         return;
     }
     match store.save(&terrain, &inventory) {
         Ok(()) => {
             store.last_saved_revision = Some(terrain.edit_revision());
+            store.last_saved_inventory = Some(inventory_snapshot);
             info!("ASTRO-RUST world saved before suspend");
         }
         Err(error) => warn!("ASTRO-RUST suspend save failed: {error}"),
@@ -188,12 +199,16 @@ pub fn save_world_on_exit(
     if exits.read().next().is_none() {
         return;
     }
-    if store.last_saved_revision == Some(terrain.edit_revision()) {
+    let inventory_snapshot = inventory.snapshot();
+    if store.last_saved_revision == Some(terrain.edit_revision())
+        && store.last_saved_inventory == Some(inventory_snapshot)
+    {
         return;
     }
     match store.save(&terrain, &inventory) {
         Ok(()) => {
             store.last_saved_revision = Some(terrain.edit_revision());
+            store.last_saved_inventory = Some(inventory_snapshot);
             info!("ASTRO-RUST world saved on exit");
         }
         Err(error) => warn!("ASTRO-RUST final save failed: {error}"),
