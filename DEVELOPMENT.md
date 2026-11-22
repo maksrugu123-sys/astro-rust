@@ -51,7 +51,7 @@
 - [x] Deterministic copper and iron ore veins in underground rock (source implemented; runtime distribution pending).
 - [ ] Oxygen and energy loops.
 - [x] Basic material inventory with mining collection and on-screen counts (source implemented; UI verification pending).
-- [x] Persist inventory counts in save format v3 while retaining v1/v2 terrain-save decoding.
+- [x] Persist inventory counts and sparse terrain deltas in the current v4 save format; older save formats are intentionally unsupported.
 - [ ] Inventory capacity, item stacks, and basic crafting.
 - [ ] Modular base placement.
 
@@ -64,7 +64,7 @@
 
 ## Current validation status
 
-No builds, tests, APK packaging, or device profiling have been run. Terrain, greedy-meshing, worker-generation, inventory, and save-migration tests are present but have not been executed. Chunk mesh generation, terrain-aware player contact, voxel ray queries, mining, block placement, bounded asynchronous chunk generation, ore collection, inventory persistence, and world save/load are implemented in source but remain uncompiled and unverified. Android packaging is not implemented.
+No builds, tests, APK packaging, or device profiling have been run. Terrain, greedy-meshing, worker-generation, inventory, sparse-save, and old-version rejection tests are present but have not been executed. Chunk mesh generation, terrain-aware player contact, voxel ray queries, mining, block placement, bounded asynchronous chunk generation, ore collection, inventory persistence, and world save/load are implemented in source but remain uncompiled and unverified. Android packaging is not implemented.
 
 ## Latest gameplay batch — voxel interaction
 
@@ -181,8 +181,8 @@ No builds, tests, APK packaging, or device profiling have been run. Terrain, gre
 
 - Loaded chunks now retain only the original values for voxel indices changed by gameplay; reverting a voxel to its generated value removes that delta.
 - Unloaded edited chunks are retained as sparse `(u16 voxel_index, voxel_kind)` records instead of complete 4096-voxel arrays.
-- Save format v4 serializes only changed voxel indices and values, sorts chunk and voxel records for deterministic output, and validates index bounds, duplicates, edit counts, coordinates, inventory limits, and checksum.
-- Version 1–3 saves remain readable. Legacy full chunk arrays are compared against deterministic generation during restore and converted to sparse deltas, preserving their actual edits.
+- Save format v4 is the only supported format. It serializes only changed voxel indices and values, sorts chunk and voxel records for deterministic output, and validates index bounds, duplicates, edit counts, coordinates, inventory limits, and checksum.
+- Versions 1–3 are explicitly rejected; legacy decoding and migration code have been removed. Existing saves in those formats cannot be loaded by this build.
 - This reduces edit-cache and save-snapshot growth when only a small fraction of a chunk is changed. The v4 file is still a single world file, and saving still creates a compact in-memory snapshot/encoded byte buffer.
 - Per-chunk disk files, lazy disk-backed edit retrieval/eviction, per-chunk corruption recovery, and planet-scale indexing are the next persistence milestone. They are not implemented by this batch.
-- Source changes and migration coverage are uncompiled and untested; no build, test, APK, CI, or device profiling was run.
+- Source changes and format-rejection coverage are uncompiled and untested; no build, test, APK, CI, or device profiling was run.
