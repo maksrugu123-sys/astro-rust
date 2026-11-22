@@ -20,8 +20,22 @@ pub fn run_app() {
     }))
     .insert_resource(ClearColor(Color::srgb(0.008, 0.012, 0.035)))
     .insert_resource(WinitSettings::mobile())
-    .add_systems(Startup, (planet::spawn_test_planet, player::spawn_player))
-    .add_systems(Update, player::move_player_on_planet);
+    .init_resource::<player::TouchControls>()
+    .init_resource::<player::CameraOrbit>()
+    .add_systems(
+        Startup,
+        (planet::spawn_test_planet, player::spawn_player, player::spawn_touch_hud),
+    )
+    .add_systems(
+        Update,
+        (
+            player::read_touch_controls,
+            player::update_orbit_state,
+            player::move_player_on_planet,
+            player::update_follow_camera,
+        )
+            .chain(),
+    );
 
     app.run();
 }
