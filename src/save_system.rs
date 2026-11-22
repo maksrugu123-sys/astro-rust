@@ -487,7 +487,7 @@ mod tests {
             push_u32(&mut bytes, 0);
             let checksum = checksum64(&bytes);
             push_u64(&mut bytes, checksum);
-            let error = decode_save(&bytes).unwrap_err();
+            let error = decode_save(&bytes).err().unwrap();
             assert!(error.contains("requires v4"));
         }
     }
