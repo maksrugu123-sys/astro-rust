@@ -8,14 +8,14 @@ publish = false
 
 [lib]
 name = "astro_rust"
-crate-type = ["staticlib", "cdylib", "rlib"]
+crate-type = ["lib", "cdylib"]
 
 [[bin]]
 name = "astro-rust"
 path = "src/main.rs"
 
 [dependencies]
-bevy = "0.20"
+bevy = { version = "0.20", features = ["android-game-activity"] }
 
 [profile.dev]
 opt-level = 1
