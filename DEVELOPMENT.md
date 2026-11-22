@@ -47,9 +47,11 @@
 - [x] Add touch HUD actions for MINE and PLACE, plus desktop E/Q controls.
 
 ## Milestone 3 — Exploration systems
-- [ ] Seeded biomes, resources, and points of interest.
+- [ ] Seeded biomes and points of interest.
+- [x] Deterministic copper and iron ore veins in underground rock (source implemented; runtime distribution pending).
 - [ ] Oxygen and energy loops.
-- [ ] Inventory and basic crafting.
+- [x] Basic material inventory with mining collection and on-screen counts (source implemented; UI verification pending).
+- [ ] Inventory capacity, item stacks, and basic crafting.
 - [ ] Modular base placement.
 
 ## Milestone 4 — Persistence and optimization
@@ -117,3 +119,14 @@ No builds, tests, APK packaging, or device profiling have been run. Terrain unit
 - Face bases are selected so triangle winding follows each face normal for all six directions.
 - Added focused tests for merging uniform regions and keeping different materials separate; tests have not been run.
 - This optimization reduces mesh vertex/index count for broad flat surfaces, but actual savings and GPU impact still require a real build and device profiling.
+
+
+## Latest exploration gameplay batch — ore and inventory
+
+- Added deterministic copper and iron ore clusters to deeper rock using seed-derived 4×4×4 vein cells.
+- Added distinct ore colors to voxel meshing; greedy meshing keeps unlike materials as separate faces.
+- Mining now collects the selected block material into a small inventory, capped at 99 per material.
+- Added a compact HUD counter for regolith, rock, copper, and iron.
+- Bumped the save format to version 2 while keeping the decoder compatible with version 1 files; new voxel IDs are validated and restored.
+- No biome-specific surface generation, crafting, inventory persistence beyond the existing terrain edits, or runtime balancing is included yet.
+- Tests/builds/device checks remain unrun.
