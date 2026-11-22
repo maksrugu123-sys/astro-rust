@@ -214,22 +214,26 @@ impl SaveStore {
         write_atomic(&temp_manifest, &manifest_path, &manifest)
             .map_err(|e| format!("Cannot commit world manifest: {e}"))?;
 
-        // The manifest is the commit point. Preserve every referenced immutable record.
+        // The manifest is the commit point. Update the in-memory index immediately;
+        // cleanup is best-effort and must never turn a committed save into a reported failure.
         let retained: HashSet<String> = records.iter()
             .map(|(coord, checksum)| Self::chunk_filename(*coord, *checksum))
             .collect();
-        for entry in fs::read_dir(&chunk_directory)
-            .map_err(|e| format!("Cannot inspect chunk directory: {e}"))?
-        {
-            let entry = entry.map_err(|e| format!("Cannot inspect chunk entry: {e}"))?;
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if name.ends_with(".chunk") && !retained.contains(&name) {
-                let _ = fs::remove_file(entry.path());
-            }
-        }
-        self.catalog = records;
+        self.catalog = records.clone();
         self.loaded_records.retain(|coord| self.catalog.contains_key(coord));
         self.failed_reads.retain(|coord| self.catalog.contains_key(coord));
+        for (coord, _) in &chunks {
+            self.loaded_records.insert(*coord);
+            self.failed_reads.remove(coord);
+        }
+        if let Ok(entries) = fs::read_dir(&chunk_directory) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if name.ends_with(".chunk") && !retained.contains(&name) {
+                    let _ = fs::remove_file(entry.path());
+                }
+            }
+        }
         Ok(())
     }
 }
