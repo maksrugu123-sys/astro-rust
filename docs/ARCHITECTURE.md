@@ -20,7 +20,7 @@ Terrain storage is divided into 16×16×16 voxel chunks. Integer world-voxel coo
 
 `TerrainWorld` owns loaded chunks and exposes block lookup, block placement/removal, spherical digging, radial surface queries, and a simple sphere-versus-ground query. Gameplay edits mark chunks dirty. The startup prototype preloads the eight chunks surrounding the planet origin, then maintains a player-centered 3×3×3 chunk neighborhood. Generation and mesh creation are limited to two new chunks per frame, stale visuals are unloaded in small batches, and active chunks are capped at 40. A 3D DDA ray query returns the first solid voxel and its axis-aligned entry face; mining removes that voxel and placement inserts regolith into the adjacent cell after a player-distance check. Touch HUD actions provide MINE and PLACE, with E/Q keyboard bindings for desktop iteration.
 
-Each loaded chunk is converted to a custom triangle mesh containing only faces adjacent to air or unloaded space. Per-vertex colors distinguish regolith from rock. The old smooth placeholder sphere has been removed; the voxel chunk meshes are now the planet's visible surface. Dirty chunks can be rebuilt after block edits without rebuilding every chunk.
+Each loaded chunk is converted to a custom triangle mesh containing only faces adjacent to air or unloaded space. A greedy 16×16 face-mask pass merges adjacent coplanar faces only when their voxel materials match; per-vertex colors distinguish regolith from rock. Face basis vectors preserve winding for all six directions. The old smooth placeholder sphere has been removed; the voxel chunk meshes are now the planet's visible surface. Dirty chunks can be rebuilt after block edits without rebuilding every chunk.
 
 The initial eight chunks and their meshes are built synchronously during startup. Subsequent streamed chunks use a bounded worker queue: worker threads generate pure CPU-side voxel arrays, while the main thread applies edits, builds render meshes, and creates entities under a per-frame budget. At most four chunk jobs are pending, and at most two are requested and applied per frame. Mesh generation remains on the main thread; distance-based LOD remains pending. Radial player contact now uses the voxel surface height, so hills, edits, and radial holes can affect support height. This approximation does not yet resolve side walls, overhangs, caves, or arbitrary capsule/voxel intersections.
 
@@ -41,11 +41,11 @@ A planet must never be represented as one dense in-memory voxel volume. Store te
 
 ## Mobile performance
 
-The renderer's High profile is a quality target, not a universal default. Runtime settings should consider GPU capabilities, available memory, thermal state where exposed, and measured frame time. Expensive features must have lower-cost fallbacks. Chunk meshes currently duplicate vertices per exposed face to preserve flat voxel shading; greedy meshing and LOD are future optimization targets.
+The renderer's High profile is a quality target, not a universal default. Runtime settings should consider GPU capabilities, available memory, thermal state where exposed, and measured frame time. Expensive features must have lower-cost fallbacks. Greedy meshing reduces duplicated face geometry on broad coplanar surfaces; distance-based LOD and device profiling remain future optimization targets.
 
 ## Current implementation
 
-The app contains a prototype capsule player, local tangent-frame math, radial gravity, jump impulse, voxel-surface radial contact, virtual touch joystick, jump/mine/place touch targets, touch/mouse camera orbit, desktop WASD/Space/E/Q controls, deterministic chunked voxel terrain, voxel DDA ray selection, mining and block placement actions, exposed-face chunk mesh generation, per-chunk materials/visual entities, and dirty mesh rebuilding. Full capsule/voxel collision, asynchronous generation/meshing, LOD, durable saves, and Android packaging are not implemented.
+The app contains a prototype capsule player, local tangent-frame math, radial gravity, jump impulse, voxel-surface radial contact, virtual touch joystick, jump/mine/place touch targets, touch/mouse camera orbit, desktop WASD/Space/E/Q controls, deterministic chunked voxel terrain, voxel DDA ray selection, mining and block placement actions, exposed-face chunk mesh generation, per-chunk materials/visual entities, and dirty mesh rebuilding. Full capsule/voxel collision, asynchronous mesh building, distance-based LOD, and Android packaging are not implemented. Deterministic chunk data generation runs on bounded worker threads, and versioned terrain saves are implemented in source but not runtime-verified.
 
 ## Terrain interaction and collision limits
 
@@ -72,3 +72,8 @@ Autosave checks the terrain edit revision every 15 seconds and writes only when 
 ## Asynchronous chunk generation
 
 Procedural chunk generation is isolated from Bevy resources and can run on worker threads. A bounded queue limits in-flight jobs, prioritizes chunks by distance from the player with stable coordinate tie-breakers, and drops results that are no longer in the desired neighborhood. The main thread remains responsible for edit-cache overlay, mesh creation, and ECS entity changes. This separation avoids touching renderer assets from workers and preserves a clear ownership boundary. The current implementation uses at most four in-flight standard-library worker threads and drops completed results outside the current desired neighborhood; it does not yet cancel running jobs or recover a panicked worker's pending key. The first eight startup chunks remain synchronous for the initial scene.
+
+
+## Greedy voxel meshing
+
+For each of six face directions and each chunk slice, the mesher creates a 16×16 mask of exposed voxel faces. A greedy rectangle pass merges adjacent entries of the same material into larger quads. Face-local axes are chosen so their cross product matches the outward normal, keeping triangle winding consistent. Different materials are never merged, preserving the existing regolith/rock vertex colors. This reduces geometry for large flat regions without changing the voxel data or mining coordinates.
