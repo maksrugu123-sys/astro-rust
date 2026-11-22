@@ -50,6 +50,7 @@ pub fn run_app() {
             terrain::stream_terrain_chunks,
             terrain::refresh_dirty_chunk_meshes,
             save_system::autosave_world,
+            save_system::save_world_on_suspend,
         )
             .chain(),
     )
