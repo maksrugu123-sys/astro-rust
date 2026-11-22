@@ -1,6 +1,6 @@
 //! Versioned, checksummed persistence for sparse terrain edits.
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs::{self, File},
     io::{Read, Write},
     path::{Path, PathBuf},
@@ -9,6 +9,7 @@ use std::{
 use bevy::prelude::*;
 
 use crate::{
+    chunk_io::{ChunkIoOperation, ChunkIoQueue},
     player::Inventory,
     terrain::{ChunkCoord, TerrainWorld, VoxelKind},
 };
@@ -33,6 +34,9 @@ pub struct SaveStore {
     last_saved_revision: Option<u64>,
     last_saved_inventory: Option<[u16; 4]>,
     timer: Timer,
+    catalog: HashMap<ChunkCoord, u64>,
+    loaded_records: HashSet<ChunkCoord>,
+    failed_reads: HashSet<ChunkCoord>,
 }
 
 impl SaveStore {
@@ -58,6 +62,9 @@ impl SaveStore {
             last_saved_revision: None,
             last_saved_inventory: None,
             timer: Timer::from_seconds(AUTOSAVE_SECONDS, TimerMode::Repeating),
+            catalog: HashMap::new(),
+            loaded_records: HashSet::new(),
+            failed_reads: HashSet::new(),
         }
     }
 
@@ -99,80 +106,107 @@ impl SaveStore {
             .and_then(|mut file| file.read_to_end(&mut manifest_bytes))
             .map_err(|e| format!("Cannot read world manifest: {e}"))?;
         let manifest = decode_manifest(&manifest_bytes)?;
-        let chunk_directory = self.chunk_directory()
-            .ok_or("No writable chunk directory is available")?;
-        let mut chunks = Vec::with_capacity(manifest.chunk_records.len());
-        let mut damaged = 0usize;
-        for (coord, expected_checksum) in manifest.chunk_records {
-            let path = Self::chunk_path(&chunk_directory, coord, expected_checksum);
-            let loaded = (|| -> Result<Vec<(u16, VoxelKind)>, String> {
-                let metadata = fs::metadata(&path)
-                    .map_err(|e| format!("Cannot inspect chunk file: {e}"))?;
-                if metadata.len() > MAX_CHUNK_FILE_BYTES {
-                    return Err("Chunk file exceeds the supported size limit".into());
-                }
-                let mut bytes = Vec::with_capacity(metadata.len() as usize);
-                File::open(&path)
-                    .and_then(|mut file| file.read_to_end(&mut bytes))
-                    .map_err(|e| format!("Cannot read chunk file: {e}"))?;
-                decode_chunk(&bytes, coord, expected_checksum)
-            })();
-            match loaded {
-                Ok(edits) => chunks.push((coord, edits)),
-                Err(error) => {
-                    damaged += 1;
-                    warn!("Skipping damaged ASTRO-RUST chunk {},{},{}: {error}", coord.x, coord.y, coord.z);
-                }
-            }
-        }
-        if damaged > 0 {
-            warn!("Loaded world with {damaged} damaged or missing chunk file(s); unaffected chunks were preserved");
-        }
         Ok(Some(SavedWorld {
             seed: manifest.seed,
             voxel_size: manifest.voxel_size,
             base_radius: manifest.base_radius,
-            chunks,
+            chunk_records: manifest.chunk_records.into_iter().collect(),
             inventory: manifest.inventory,
         }))
     }
 
-    fn save(&self, terrain: &TerrainWorld, inventory: &Inventory) -> Result<(), String> {
+    pub(crate) fn request_saved_chunk(
+        &mut self,
+        coord: ChunkCoord,
+        io: &mut ChunkIoQueue,
+    ) -> bool {
+        let Some(checksum) = self.catalog.get(&coord).copied() else {
+            return false;
+        };
+        if self.loaded_records.contains(&coord) || self.failed_reads.contains(&coord) {
+            return true;
+        }
+        let Some(directory) = self.chunk_directory() else {
+            self.failed_reads.insert(coord);
+            warn!("Cannot load saved chunk {},{},{}: no save directory", coord.x, coord.y, coord.z);
+            return true;
+        };
+        let path = Self::chunk_path(&directory, coord, checksum);
+        if !io.is_read_pending(coord) {
+            let _ = io.request_read(coord, path);
+        }
+        true
+    }
+
+    /// Validates completed disk reads before making their edits available to terrain.
+    pub fn process_chunk_io(
+        mut io: ResMut<ChunkIoQueue>,
+        mut store: ResMut<SaveStore>,
+        mut terrain: ResMut<TerrainWorld>,
+    ) {
+        for completion in io.collect_completed(8) {
+            if completion.operation != ChunkIoOperation::Read {
+                continue;
+            }
+            let coord = completion.coord;
+            let Some(expected_checksum) = store.catalog.get(&coord).copied() else {
+                continue;
+            };
+            match completion.result.and_then(|bytes| decode_chunk(&bytes, coord, expected_checksum)) {
+                Ok(edits) => {
+                    terrain.cache_saved_chunk_edits(coord, edits);
+                    store.loaded_records.insert(coord);
+                }
+                Err(error) => {
+                    store.failed_reads.insert(coord);
+                    warn!("Saved ASTRO-RUST chunk {},{},{} is unavailable and remains hidden: {error}", coord.x, coord.y, coord.z);
+                }
+            }
+        }
+    }
+
+    fn save(&mut self, terrain: &TerrainWorld, inventory: &Inventory) -> Result<(), String> {
         let Some(directory) = self.directory.as_ref() else {
             return Err("No writable application data directory is available".into());
         };
-        let edited_count = terrain.edited_chunk_count();
-        if edited_count > MAX_SAVED_CHUNKS {
-            return Err(format!(
-                "World contains {} edited chunks; save limit is {}",
-                edited_count, MAX_SAVED_CHUNKS
-            ));
-        }
         let chunks = terrain.export_edited_chunks();
-        let manifest = encode_manifest(terrain, &chunks, inventory)?;
+        let mut records = self.catalog.clone();
+
+        // If a catalogued chunk is resident and no longer edited, its old disk
+        // record must be removed. Unloaded records are retained without reading them.
+        let catalog_coords: Vec<_> = records.keys().copied().collect();
+        for coord in catalog_coords {
+            if terrain.is_chunk_loaded(coord) && !terrain.is_chunk_edited(coord) {
+                records.remove(&coord);
+            }
+        }
+
         let chunk_directory = directory.join(CHUNK_DIRECTORY);
         fs::create_dir_all(&chunk_directory)
             .map_err(|e| format!("Cannot create chunk directory: {e}"))?;
-
-        let mut retained = HashSet::with_capacity(chunks.len());
         for (coord, edits) in &chunks {
             let bytes = encode_chunk(*coord, edits)?;
             let checksum = read_u64(&bytes, bytes.len() - 8)?;
-            let filename = Self::chunk_filename(*coord, checksum);
-            retained.insert(filename);
             let path = Self::chunk_path(&chunk_directory, *coord, checksum);
             let temp_path = path.with_extension("chunk.tmp");
             write_atomic(&temp_path, &path, &bytes)
                 .map_err(|e| format!("Cannot persist chunk {},{},{}: {e}", coord.x, coord.y, coord.z))?;
+            records.insert(*coord, checksum);
+        }
+        if records.len() > MAX_SAVED_CHUNKS {
+            return Err(format!("World contains {} edited chunks; save limit is {}", records.len(), MAX_SAVED_CHUNKS));
         }
 
+        let manifest = encode_manifest_records(terrain, &records, inventory)?;
         let manifest_path = directory.join(MANIFEST_FILE);
         let temp_manifest = directory.join(MANIFEST_TEMP);
         write_atomic(&temp_manifest, &manifest_path, &manifest)
             .map_err(|e| format!("Cannot commit world manifest: {e}"))?;
 
-        // The manifest is the commit point. Orphaned files are safe to remove
-        // only after it has been replaced successfully.
+        // The manifest is the commit point. Preserve every referenced immutable record.
+        let retained: HashSet<String> = records.iter()
+            .map(|(coord, checksum)| Self::chunk_filename(*coord, *checksum))
+            .collect();
         for entry in fs::read_dir(&chunk_directory)
             .map_err(|e| format!("Cannot inspect chunk directory: {e}"))?
         {
@@ -182,6 +216,9 @@ impl SaveStore {
                 let _ = fs::remove_file(entry.path());
             }
         }
+        self.catalog = records;
+        self.loaded_records.retain(|coord| self.catalog.contains_key(coord));
+        self.failed_reads.retain(|coord| self.catalog.contains_key(coord));
         Ok(())
     }
 }
@@ -190,23 +227,27 @@ struct SavedWorld {
     seed: u64,
     voxel_size: f32,
     base_radius: f32,
-    chunks: Vec<(ChunkCoord, Vec<(u16, VoxelKind)>)>,
+    chunk_records: HashMap<ChunkCoord, u64>,
     inventory: [u16; 4],
 }
 
 pub fn load_saved_world(
     mut terrain: ResMut<TerrainWorld>,
     mut inventory: ResMut<Inventory>,
-    store: Res<SaveStore>,
+    mut store: ResMut<SaveStore>,
 ) {
     match store.load() {
         Ok(Some(save)) => {
-            terrain.restore_saved_world(
+            let saved_coords = save.chunk_records.keys().copied().collect();
+            terrain.restore_saved_world_index(
                 save.seed,
                 save.voxel_size,
                 save.base_radius,
-                save.chunks,
+                saved_coords,
             );
+            store.catalog = save.chunk_records;
+            store.loaded_records.clear();
+            store.failed_reads.clear();
             inventory.regolith = save.inventory[0].min(99);
             inventory.rock = save.inventory[1].min(99);
             inventory.copper = save.inventory[2].min(99);
@@ -316,11 +357,25 @@ fn encode_manifest(
     chunks: &[(ChunkCoord, Vec<(u16, VoxelKind)>)],
     inventory: &Inventory,
 ) -> Result<Vec<u8>, String> {
+    let mut records = HashMap::with_capacity(chunks.len());
+    for (coord, edits) in chunks {
+        let chunk_bytes = encode_chunk(*coord, edits)?;
+        let checksum = read_u64(&chunk_bytes, chunk_bytes.len() - 8)?;
+        records.insert(*coord, checksum);
+    }
+    encode_manifest_records(terrain, &records, inventory)
+}
+
+fn encode_manifest_records(
+    terrain: &TerrainWorld,
+    records: &HashMap<ChunkCoord, u64>,
+    inventory: &Inventory,
+) -> Result<Vec<u8>, String> {
     validate_inventory(inventory)?;
-    if chunks.len() > MAX_SAVED_CHUNKS {
+    if records.len() > MAX_SAVED_CHUNKS {
         return Err("Save contains too many edited chunks".into());
     }
-    let mut ordered: Vec<_> = chunks.iter().collect();
+    let mut ordered: Vec<_> = records.iter().collect();
     ordered.sort_by_key(|(coord, _)| (coord.x, coord.y, coord.z));
     let mut bytes = Vec::with_capacity(40 + ordered.len() * 20 + 8);
     bytes.extend_from_slice(MAGIC);
@@ -334,16 +389,14 @@ fn encode_manifest(
     push_u16(&mut bytes, inventory.iron);
     push_u32(&mut bytes, ordered.len() as u32);
     let mut unique = HashSet::with_capacity(ordered.len());
-    for (coord, edits) in ordered {
-        if !coord.is_representable() || !unique.insert(*coord) {
+    for (coord, checksum) in ordered {
+        if !coord.is_representable() || !unique.insert(**coord) {
             return Err("Manifest contains an invalid or duplicate chunk coordinate".into());
         }
-        let chunk_bytes = encode_chunk(*coord, edits)?;
-        let chunk_checksum = read_u64(&chunk_bytes, chunk_bytes.len() - 8)?;
         push_i32(&mut bytes, coord.x);
         push_i32(&mut bytes, coord.y);
         push_i32(&mut bytes, coord.z);
-        push_u64(&mut bytes, chunk_checksum);
+        push_u64(&mut bytes, **checksum);
     }
     let checksum = checksum64(&bytes);
     push_u64(&mut bytes, checksum);
