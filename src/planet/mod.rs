@@ -32,11 +32,4 @@ pub fn spawn_test_planet(
             0.0,
         )),
     ));
-
-    commands.spawn((
-        Camera3d::default(),
-        Transform::from_xyz(0.0, 2.0, 9.0).looking_at(Vec3::ZERO, Vec3::Y),
-        #[cfg(target_os = "android")]
-        Msaa::Off,
-    ));
 }
