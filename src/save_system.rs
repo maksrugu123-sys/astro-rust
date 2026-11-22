@@ -398,6 +398,24 @@ mod tests {
     }
 
     #[test]
+    fn version_one_save_loads_with_empty_inventory() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(MAGIC);
+        push_u32(&mut bytes, 1);
+        push_u64(&mut bytes, 77);
+        push_u32(&mut bytes, 0.25_f32.to_bits());
+        push_u32(&mut bytes, 3.0_f32.to_bits());
+        push_u32(&mut bytes, 0);
+        let checksum = checksum64(&bytes);
+        push_u64(&mut bytes, checksum);
+
+        let decoded = decode_save(&bytes).unwrap();
+        assert_eq!(decoded.seed, 77);
+        assert_eq!(decoded.inventory, [0; 4]);
+        assert!(decoded.chunks.is_empty());
+    }
+
+    #[test]
     fn damaged_save_is_rejected_by_checksum() {
         let world = TerrainWorld::new(99, 0.25, 3.0);
         let mut bytes = encode_save(&world, &[], &Inventory::default()).unwrap();
