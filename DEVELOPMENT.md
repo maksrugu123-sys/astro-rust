@@ -139,3 +139,10 @@ No builds, tests, APK packaging, or device profiling have been run. Terrain unit
 - Decoder compatibility remains for v1 terrain saves and v2 ore-aware terrain saves; those older formats restore an empty inventory.
 - Inventory counts are clamped to the prototype stack cap of 99 when loading.
 - Save round-trip coverage now includes inventory counters; the test has not been executed.
+
+
+### Resource collection safety
+
+- Mining now refuses to destroy a block when its corresponding inventory stack is already at 99, preventing silent resource loss.
+- Surface noise and ore-vein placement share one deterministic integer hash implementation.
+- Added source-level coverage for version-1 save migration and inventory stack capacity; neither test has been run.
