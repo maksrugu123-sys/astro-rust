@@ -12,7 +12,7 @@ pub const CHUNK_SIZE: i32 = 16;
 const CHUNK_VOLUME: usize = (CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE) as usize;
 const SURFACE_NOISE_VOXELS: f32 = 1.35;
 const STREAM_RADIUS: i32 = 1;
-const MAX_LOADED_CHUNKS: usize = 32;
+const MAX_LOADED_CHUNKS: usize = 40;
 const MAX_CHUNK_LOADS_PER_FRAME: usize = 2;
 const MAX_CHUNK_UNLOADS_PER_FRAME: usize = 4;
 
@@ -198,6 +198,8 @@ impl TerrainWorld {
             }
         }
 
+        // Procedural generation is not a gameplay edit.
+        chunk.edited = false;
         // Reapply player edits after deterministic regeneration.
         if let Some(saved_blocks) = self.edited_cache.remove(&coord) {
             if saved_blocks.len() == CHUNK_VOLUME {
