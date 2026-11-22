@@ -187,3 +187,11 @@ No builds, tests, APK packaging, or device profiling have been run. Terrain, gre
 - Versions 1–4 are explicitly rejected. There is no legacy decoder or migration path.
 - This removes the single giant world-save file and whole-world checksum failure domain. However, startup still reads all indexed chunk deltas into the in-memory edit cache, and saving still snapshots all deltas before writing. A bounded disk-backed lazy cache, asynchronous scheduled disk I/O, and 64-bit world indexing remain future work.
 - Source changes and new persistence tests are uncompiled and untested; no build, test, APK, CI, or device profiling was run.
+
+
+### Bounded asynchronous chunk-read foundation
+
+- Added `src/chunk_io.rs`, a bounded worker queue for reading individual chunk files away from the frame thread. It uses two named workers, a 16-request bounded queue, a 16-completion backpressure queue, per-file size limits, duplicate-coordinate suppression, and a per-frame completion limit at the API boundary.
+- Registered the queue as an application resource. The worker returns raw bytes only; the save subsystem must still validate the chunk checksum, format version, and coordinate before applying any edit.
+- This is infrastructure only: terrain streaming does not yet submit requests to this queue, and startup still eagerly decodes every indexed chunk. No claim of lazy loading, cache eviction, or non-blocking autosave is made.
+- Added source-level tests for empty queue state and missing-file handling. Tests, formatting, and compilation have not been run.
