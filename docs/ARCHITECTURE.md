@@ -58,3 +58,12 @@ Mining and placement use a 3D DDA ray from just in front of the player along the
 The runtime requests the 27 chunks in a one-chunk radius around the player's current chunk coordinate. New chunk generation and mesh creation are limited to two chunks per update, and stale visuals are removed in batches of four. The current active-chunk cap is 40. One shared material is used across streamed terrain entities.
 
 When an edited chunk is unloaded, its complete voxel array is retained in a runtime cache. On reload, deterministic terrain generation runs first and the cached edited array is restored over it. Neighboring loaded chunks are marked dirty on both load and unload so shared boundaries are remeshed. The edit cache is process-local and currently has no durable serialization or hard capacity; it is not a substitute for versioned save files.
+
+
+## Durable terrain persistence
+
+The save subsystem stores the world seed and terrain parameters plus complete voxel arrays for player-edited chunks only. Unmodified terrain is regenerated deterministically. Saved edited chunks are loaded into a lazy edit cache and reapplied when their chunk is streamed in; loading a save therefore does not force every edited chunk to be resident or meshed.
+
+The binary format has a magic header, explicit format version, fixed little-endian fields, a 64-bit FNV-1a integrity checksum, strict chunk-count and voxel-kind validation, and exact-length validation. Writes go to a temporary file, are flushed with `sync_all`, then renamed into place. Android resolves the app-private internal files directory from Bevy's Android application handle; desktop development uses `./saves/`.
+
+Autosave checks the terrain edit revision every 15 seconds and writes only when edits have changed. A final save is also registered for Bevy app exit. The Android activity-suspend path is not yet wired, so a forced process kill can lose edits made since the last autosave. The runtime edit cache is still process memory and currently has no disk-backed eviction policy.
