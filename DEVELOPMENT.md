@@ -195,3 +195,10 @@ No builds, tests, APK packaging, or device profiling have been run. Terrain, gre
 - Registered the queue as an application resource. The worker returns raw bytes only; the save subsystem must still validate the chunk checksum, format version, and coordinate before applying any edit.
 - This is infrastructure only: terrain streaming does not yet submit requests to this queue, and startup still eagerly decodes every indexed chunk. No claim of lazy loading, cache eviction, or non-blocking autosave is made.
 - Added source-level tests for empty queue state and missing-file handling. Tests, formatting, and compilation have not been run.
+
+
+### Asynchronous chunk writes
+
+The bounded `ChunkIoQueue` now accepts immutable chunk-file write jobs as well as reads. It uses the same two workers and bounded request/completion channels. A write creates the parent directory, writes to a temporary path, flushes the file with `sync_all`, and renames it to its immutable final path. Completion is reported only after the rename succeeds. Queue saturation and duplicate in-flight writes are rejected without blocking the game thread; callers must retain dirty data and retry.
+
+This is still a low-level I/O primitive, not an active autosave pipeline. The current `SaveStore` still performs synchronous chunk writes and manifest commits, and startup still decodes all chunk payloads. No claim of disk-backed lazy loading or bounded edit-cache memory is made. The new write-path test has been added but not executed.
