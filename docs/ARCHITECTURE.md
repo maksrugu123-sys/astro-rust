@@ -85,3 +85,6 @@ Underground rock generation includes deterministic copper and iron vein cells. V
 
 
 Inventory is included in save format v3 alongside terrain edits. Version 1 and 2 files remain readable and initialize inventory to zero; version 3 stores four bounded material counters. On load, counts are clamped to the current per-material stack cap.
+
+
+Mining checks stack capacity before removing a voxel. A full material stack therefore leaves the selected block intact instead of silently discarding the resource. The same seed-derived integer hash underpins both surface variation and ore-vein placement.
