@@ -1,7 +1,7 @@
 //! Chunked voxel data and spherical terrain rendering for ASTRO-RUST.
 
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{BTreeMap, HashMap, HashSet, VecDeque},
     sync::{mpsc, Mutex},
     thread,
 };
@@ -205,7 +205,9 @@ impl TerrainGenerationQueue {
 #[derive(Clone, Debug)]
 pub struct VoxelChunk {
     blocks: Vec<VoxelKind>,
-    /// True when at least one block has been changed by gameplay.
+    /// Original generated values for changed indices; equal-to-original edits are removed.
+    originals: BTreeMap<u16, VoxelKind>,
+    /// True when at least one block differs from procedural generation.
     pub edited: bool,
     mesh_dirty: bool,
 }
@@ -214,6 +216,7 @@ impl Default for VoxelChunk {
     fn default() -> Self {
         Self {
             blocks: vec![VoxelKind::Air; CHUNK_VOLUME],
+            originals: BTreeMap::new(),
             edited: false,
             mesh_dirty: true,
         }
@@ -240,8 +243,36 @@ impl VoxelChunk {
         if self.blocks[index] == kind {
             return false;
         }
+        let key = index as u16;
+        let original = *self.originals.entry(key).or_insert(self.blocks[index]);
         self.blocks[index] = kind;
-        self.edited = true;
+        if kind == original {
+            self.originals.remove(&key);
+        }
+        self.edited = !self.originals.is_empty();
+        self.mesh_dirty = true;
+        true
+    }
+
+    fn sparse_edits(&self) -> Vec<(u16, VoxelKind)> {
+        self.originals.keys().filter_map(|index| {
+            self.blocks.get(*index as usize).copied().map(|kind| (*index, kind))
+        }).collect()
+    }
+
+    fn apply_sparse_edits(&mut self, edits: &[(u16, VoxelKind)]) -> bool {
+        for (index, kind) in edits {
+            let index = *index as usize;
+            if index >= CHUNK_VOLUME {
+                return false;
+            }
+            let original = self.blocks[index];
+            if original != *kind {
+                self.originals.insert(index as u16, original);
+                self.blocks[index] = *kind;
+            }
+        }
+        self.edited = !self.originals.is_empty();
         self.mesh_dirty = true;
         true
     }
@@ -257,10 +288,15 @@ impl VoxelChunk {
     }
 }
 
+pub(crate) enum SavedChunkData {
+    LegacyFull(Vec<VoxelKind>),
+    Sparse(Vec<(u16, VoxelKind)>),
+}
+
 #[derive(Resource, Debug)]
 pub struct TerrainWorld {
     chunks: HashMap<ChunkCoord, VoxelChunk>,
-    edited_cache: HashMap<ChunkCoord, Vec<VoxelKind>>,
+    edited_cache: HashMap<ChunkCoord, Vec<(u16, VoxelKind)>>,
     edit_revision: u64,
     pub seed: u64,
     pub voxel_size: f32,
@@ -300,33 +336,47 @@ impl TerrainWorld {
         }).count()
     }
 
-    /// Copies only player-edited chunks, including chunks currently unloaded.
-    pub(crate) fn export_edited_chunks(&self) -> Vec<(ChunkCoord, Vec<VoxelKind>)> {
+    /// Copies sparse gameplay deltas, including chunks currently unloaded.
+    pub(crate) fn export_edited_chunks(&self) -> Vec<(ChunkCoord, Vec<(u16, VoxelKind)>)> {
         let mut edited = self.edited_cache.clone();
         for (coord, chunk) in &self.chunks {
             if chunk.edited {
-                edited.insert(*coord, chunk.blocks.clone());
+                edited.insert(*coord, chunk.sparse_edits());
             }
         }
+        edited.retain(|_, edits| !edits.is_empty());
         edited.into_iter().collect()
     }
 
-    /// Restores a validated save snapshot into the lazy-load edit cache.
+    /// Restores sparse v4 deltas and migrates legacy full-chunk saves in memory.
     pub(crate) fn restore_saved_world(
         &mut self,
         seed: u64,
         voxel_size: f32,
         base_radius: f32,
-        chunks: Vec<(ChunkCoord, Vec<VoxelKind>)>,
+        chunks: Vec<(ChunkCoord, SavedChunkData)>,
     ) {
         self.seed = seed;
         self.voxel_size = voxel_size;
         self.base_radius = base_radius;
         self.chunks.clear();
         self.edited_cache.clear();
-        for (coord, blocks) in chunks {
-            if coord.is_representable() && blocks.len() == CHUNK_VOLUME {
-                self.edited_cache.insert(coord, blocks);
+        for (coord, data) in chunks {
+            if !coord.is_representable() {
+                continue;
+            }
+            let edits = match data {
+                SavedChunkData::Sparse(edits) => edits,
+                SavedChunkData::LegacyFull(blocks) if blocks.len() == CHUNK_VOLUME => {
+                    let baseline = generate_chunk(coord, seed, voxel_size, base_radius);
+                    blocks.into_iter().enumerate().filter_map(|(index, kind)| {
+                        (baseline.blocks[index] != kind).then_some((index as u16, kind))
+                    }).collect()
+                }
+                SavedChunkData::LegacyFull(_) => continue,
+            };
+            if !edits.is_empty() {
+                self.edited_cache.insert(coord, edits);
             }
         }
         self.edit_revision = 1;
@@ -346,7 +396,7 @@ impl TerrainWorld {
             return false;
         };
         if chunk.edited {
-            self.edited_cache.insert(coord, chunk.blocks);
+            self.edited_cache.insert(coord, chunk.sparse_edits());
         }
         for neighbor in chunk_neighbors(coord) {
             if let Some(chunk) = self.chunks.get_mut(&neighbor) {
@@ -368,11 +418,8 @@ impl TerrainWorld {
         if self.chunks.contains_key(&coord) {
             return;
         }
-        if let Some(saved_blocks) = self.edited_cache.remove(&coord) {
-            if saved_blocks.len() == CHUNK_VOLUME {
-                chunk.blocks = saved_blocks;
-                chunk.edited = true;
-            }
+        if let Some(edits) = self.edited_cache.remove(&coord) {
+            let _ = chunk.apply_sparse_edits(&edits);
         }
         chunk.mesh_dirty = true;
         self.chunks.insert(coord, chunk);
