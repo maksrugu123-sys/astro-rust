@@ -14,6 +14,7 @@ use crate::{
 };
 
 const MANIFEST_FILE: &str = "world.manifest";
+const OBSOLETE_MONOLITHIC_SAVE: &str = "world.astrosave";
 const CHUNK_DIRECTORY: &str = "chunks";
 const MANIFEST_TEMP: &str = "world.manifest.tmp";
 const MAGIC: &[u8; 8] = b"ASTRMNF1";
@@ -81,6 +82,11 @@ impl SaveStore {
             return Err("No writable application data directory is available".into());
         };
         if !manifest_path.exists() {
+            let obsolete_path = self.directory.as_ref()
+                .map(|directory| directory.join(OBSOLETE_MONOLITHIC_SAVE));
+            if obsolete_path.as_ref().is_some_and(|path| path.exists()) {
+                return Err("An obsolete monolithic v4 save was found. This build requires v5 chunk files; the old file was left untouched.".into());
+            }
             return Ok(None);
         }
         let manifest_metadata = fs::metadata(&manifest_path)
