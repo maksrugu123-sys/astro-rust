@@ -54,6 +54,14 @@ impl ChunkCoord {
         }
     }
 
+    fn is_representable(self) -> bool {
+        let min = i32::MIN.div_euclid(CHUNK_SIZE);
+        let max = i32::MAX.div_euclid(CHUNK_SIZE);
+        (min..=max).contains(&self.x)
+            && (min..=max).contains(&self.y)
+            && (min..=max).contains(&self.z)
+    }
+
     fn origin(self) -> IVec3 {
         IVec3::new(
             self.x.saturating_mul(CHUNK_SIZE),
@@ -296,7 +304,7 @@ impl TerrainWorld {
         self.chunks.clear();
         self.edited_cache.clear();
         for (coord, blocks) in chunks {
-            if blocks.len() == CHUNK_VOLUME {
+            if coord.is_representable() && blocks.len() == CHUNK_VOLUME {
                 self.edited_cache.insert(coord, blocks);
             }
         }
@@ -328,7 +336,7 @@ impl TerrainWorld {
     }
 
     pub fn ensure_chunk(&mut self, coord: ChunkCoord) {
-        if self.chunks.contains_key(&coord) {
+        if !coord.is_representable() || self.chunks.contains_key(&coord) {
             return;
         }
         let generated = generate_chunk(coord, self.seed, self.voxel_size, self.base_radius);
@@ -895,6 +903,13 @@ mod tests {
         let neighbors = chunk_neighbors(ChunkCoord { x: i32::MAX, y: i32::MIN, z: 0 });
         assert!(neighbors.iter().all(|coord| coord.x == i32::MAX || coord.x == i32::MAX - 1));
         assert!(neighbors.iter().all(|coord| coord.y == i32::MIN || coord.y == i32::MIN + 1));
+    }
+
+    #[test]
+    fn chunk_coordinates_reject_unrepresentable_world_ranges() {
+        assert!(ChunkCoord { x: i32::MAX.div_euclid(CHUNK_SIZE), y: 0, z: 0 }.is_representable());
+        assert!(!ChunkCoord { x: i32::MAX, y: 0, z: 0 }.is_representable());
+        assert!(ChunkCoord { x: i32::MIN.div_euclid(CHUNK_SIZE), y: 0, z: 0 }.is_representable());
     }
 
     #[test]
