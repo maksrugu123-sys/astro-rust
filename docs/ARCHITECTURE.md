@@ -77,3 +77,8 @@ Procedural chunk generation is isolated from Bevy resources and can run on worke
 ## Greedy voxel meshing
 
 For each of six face directions and each chunk slice, the mesher creates a 16×16 mask of exposed voxel faces. A greedy rectangle pass merges adjacent entries of the same material into larger quads. Face-local axes are chosen so their cross product matches the outward normal, keeping triangle winding consistent. Different materials are never merged, preserving the existing regolith/rock vertex colors. This reduces geometry for large flat regions without changing the voxel data or mining coordinates.
+
+
+## Resources and inventory prototype
+
+Underground rock generation includes deterministic copper and iron vein cells. Vein placement is derived from the world seed and integer voxel coordinates, so chunks can be generated independently without seams or runtime random-state dependencies. Mining collects the actual removed voxel material into a bounded prototype inventory (99 per material), and the HUD reports regolith, rock, copper, and iron counts. The save format advances to version 2 for the expanded voxel-kind IDs while continuing to decode version 1 terrain saves.
