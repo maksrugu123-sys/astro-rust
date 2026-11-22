@@ -70,3 +70,12 @@ Do not claim the disk cache is complete until the runtime uses this index-first,
 - Do not expose a generated baseline chunk before any referenced disk edit record has been loaded and validated.
 - Keep checksum/version/coordinate validation in the save subsystem; the I/O worker returns raw bytes only.
 - Autosave and suspend/exit writes remain synchronous until a bounded asynchronous write/commit path is implemented.
+
+
+### Asynchronous chunk writes
+
+The bounded `ChunkIoQueue` now accepts immutable chunk-file write jobs as well as reads. It uses the same two workers and bounded request/completion channels. A write creates the parent directory, writes to a temporary path, flushes the file with `sync_all`, and renames it to its immutable final path. Completion is reported only after the rename succeeds. Queue saturation and duplicate in-flight writes are rejected without blocking the game thread; callers must retain dirty data and retry.
+
+This is still a low-level I/O primitive, not an active autosave pipeline. The current `SaveStore` still performs synchronous chunk writes and manifest commits, and startup still decodes all chunk payloads. No claim of disk-backed lazy loading or bounded edit-cache memory is made. The new write-path test has been added but not executed.
+
+- The asynchronous chunk queue supports immutable writes. A successful chunk-write completion is required before its checksum reference may be committed into a new manifest. Failed writes must leave the old manifest valid and retain dirty data for retry.
