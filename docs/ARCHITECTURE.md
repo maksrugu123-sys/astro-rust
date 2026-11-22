@@ -66,7 +66,7 @@ The save subsystem stores the world seed and terrain parameters plus complete vo
 
 The binary format has a magic header, explicit format version, fixed little-endian fields, a 64-bit FNV-1a integrity checksum, strict chunk-count and voxel-kind validation, and exact-length validation. Writes go to a temporary file, are flushed with `sync_all`, then renamed into place. Android resolves the app-private internal files directory from Bevy's Android application handle; desktop development uses `./saves/`.
 
-Autosave checks the terrain edit revision every 15 seconds and writes only when edits have changed. A final save is also registered for Bevy app exit, and the `WillSuspend` lifecycle message triggers a save on the last active frame before the app is backgrounded. A forced process kill that bypasses lifecycle delivery can still lose edits made since the last successful save. The runtime edit cache is still process memory and currently has no disk-backed eviction policy.
+Autosave checks the terrain edit revision and inventory snapshot every 15 seconds and writes only when either has changed. A final save is also registered for Bevy app exit, and the `WillSuspend` lifecycle message triggers a save on the last active frame before the app is backgrounded. A forced process kill that bypasses lifecycle delivery can still lose edits made since the last successful save. The runtime edit cache is still process memory and currently has no disk-backed eviction policy. Chunk coordinates loaded from saves are checked against the signed 32-bit voxel-coordinate range, and neighbor/DDA coordinate stepping saturates at integer limits.
 
 
 ## Asynchronous chunk generation
@@ -88,3 +88,6 @@ Inventory is included in save format v3 alongside terrain edits. Version 1 and 2
 
 
 Mining checks stack capacity before removing a voxel. A full material stack therefore leaves the selected block intact instead of silently discarding the resource. The same seed-derived integer hash underpins both surface variation and ore-vein placement.
+
+
+Inventory is part of the save dirty-state key independently of terrain revision. This keeps later crafting, dropping, or transfer operations durable even when they do not directly edit a voxel. The current save writer still snapshots complete edited chunk arrays in memory; a streaming or sparse-delta save format remains a future memory optimization.
