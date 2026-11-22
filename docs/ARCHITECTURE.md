@@ -110,3 +110,10 @@ This is not yet a fully disk-backed lazy cache: startup currently reads all mani
 A dedicated `ChunkIoQueue` now provides two named worker threads, a bounded request channel, a bounded completion channel that applies backpressure, duplicate-coordinate suppression, and bounded per-frame completion collection. Reads are capped before allocation and checked again after reading to handle files that grow during the operation. Worker panics are converted to failed read results. The queue returns raw bytes and does not bypass the v5 decoder's checksum, version, or coordinate validation.
 
 This queue is registered but not yet connected to terrain streaming or the v5 manifest index. The current runtime therefore still loads all edited chunk records synchronously at startup and writes saves synchronously. The next integration step must make the manifest index authoritative, request records only when their chunks enter the streaming neighborhood, keep generated chunks hidden until their disk edits have been validated, and preserve untouched manifest entries during incremental saves.
+
+
+### Asynchronous chunk writes
+
+The bounded `ChunkIoQueue` now accepts immutable chunk-file write jobs as well as reads. It uses the same two workers and bounded request/completion channels. A write creates the parent directory, writes to a temporary path, flushes the file with `sync_all`, and renames it to its immutable final path. Completion is reported only after the rename succeeds. Queue saturation and duplicate in-flight writes are rejected without blocking the game thread; callers must retain dirty data and retry.
+
+This is still a low-level I/O primitive, not an active autosave pipeline. The current `SaveStore` still performs synchronous chunk writes and manifest commits, and startup still decodes all chunk payloads. No claim of disk-backed lazy loading or bounded edit-cache memory is made. The new write-path test has been added but not executed.
