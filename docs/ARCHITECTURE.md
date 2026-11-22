@@ -91,3 +91,12 @@ Mining checks stack capacity before removing a voxel. A full material stack ther
 
 
 Inventory is part of the save dirty-state key independently of terrain revision. This keeps later crafting, dropping, or transfer operations durable even when they do not directly edit a voxel. The current save writer still snapshots complete edited chunk arrays in memory; a streaming or sparse-delta save format remains a future memory optimization.
+
+
+## Sparse edit representation and persistence v4
+
+A generated chunk remains a normal dense 16³ array while it is loaded for fast block access and meshing. Gameplay changes are tracked separately as sparse deltas: each changed voxel index stores its original generated value while the current chunk array stores the live value. If gameplay restores the original value, the delta is removed. On unload, only the changed index/value pairs are retained, and they are overlaid on a freshly generated baseline when the chunk is loaded again.
+
+Save format v4 writes a per-chunk edit count followed by compact 16-bit voxel indices and 8-bit voxel kinds. Chunk and voxel records are sorted before encoding, and the decoder validates bounds, duplicate coordinates/indices, record counts, exact trailing position, metadata, and checksum. Version 1–3 full-array saves remain supported: their arrays are compared with deterministic generated chunks during restore and migrated to sparse deltas without intentionally dropping edits.
+
+The v4 world save is still one monolithic file with a whole-file checksum. Its decoder rejects a damaged file as a whole; it does not yet isolate a damaged chunk. Sparse edit snapshots and the encoded output are still assembled in RAM during saving, and restored edit records are still held in an in-memory cache. The next persistence stage is an indexed directory of independently checksummed chunk files with lazy loading, bounded cache/eviction, and recovery that can skip or regenerate one damaged chunk without invalidating the rest of the world. Large-planet indexing and coordinate precision need separate design work before expanding world bounds.
