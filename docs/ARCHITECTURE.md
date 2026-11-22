@@ -4,13 +4,19 @@
 
 The initial world model uses a spherical planet centered at the origin. Positions are measured in meters. The outward surface normal at a position is the normalized center-to-position vector; gravity points in the opposite direction.
 
-Pure planet and player math stays independent of rendering where practical. Local tangent frames provide an orthonormal basis (up, forward, right) at each surface position. Movement is projected onto this tangent plane, then the player is re-projected to the configured surface radius.
+Pure planet and player math stays independent of rendering where practical. Local tangent frames provide an orthonormal basis (up, forward, right) at each surface position. The player is integrated in world space under radial gravity and is constrained by a spherical collision boundary until terrain collision data exists.
 
 ## Player and controls
 
-The player is kinematic in the current prototype. A local heading is transported along the surface to avoid resetting orientation to a fixed world axis near the poles. Movement input is resolved against the camera-relative tangent basis.
+The prototype player uses a capsule transform, world-space velocity, radial gravity, and a grounded state. Gravity accelerates toward the planet center. Jumping adds an impulse along the local outward normal. A spherical contact resolver clamps the capsule center to the configured surface radius and removes inward radial velocity. The physics timestep is capped to reduce instability after long mobile frames.
 
-On touch devices, a fixed lower-left virtual joystick controls movement. Touches beginning on the right side of the screen rotate camera yaw and pitch; simultaneous touches are supported so movement and view control can be used together. Mouse drag and WASD remain available for desktop iteration. The orbit camera uses the local surface normal as its up vector.
+Movement input accelerates along camera-relative tangent directions. Ground friction damps horizontal velocity when no movement input is present; ground and air tangent speeds are bounded. A local heading is transported along the surface to avoid resetting orientation to a fixed world axis near the poles.
+
+On touch devices, a fixed lower-left virtual joystick controls movement. Touches beginning on the right side rotate camera yaw and pitch. A separate lower-right touch target triggers jumping and is excluded from camera drag. Simultaneous movement, view control, and jump touches are supported. Mouse drag, WASD, and Space remain available for desktop iteration. The orbit camera uses the local surface normal as its up vector.
+
+## Collision scope
+
+The current collision shape is an ideal sphere with radius equal to planet radius plus the player's center offset. It supports basic grounding and jumping but does not account for hills, caves, overhangs, or edited terrain. Terrain collision must replace or extend this boundary once voxel chunks are implemented.
 
 ## Planned subsystem boundaries
 
@@ -33,4 +39,4 @@ The renderer's High profile is a quality target, not a universal default. Runtim
 
 ## Current implementation
 
-The app contains a prototype spherical planet, capsule player, local tangent-frame math, radial surface alignment, virtual touch joystick, touch/mouse camera orbit, and desktop WASD movement. Movement is still kinematic: physical acceleration, collision, jumping, terrain, streaming, saves, and Android packaging are not implemented.
+The app contains a prototype spherical planet, capsule player, local tangent-frame math, radial gravity, jump impulse, spherical-boundary collision response, virtual touch joystick, jump touch target, touch/mouse camera orbit, and desktop WASD/Space controls. Terrain-aware collision, chunk streaming, saves, and Android packaging are not implemented.
