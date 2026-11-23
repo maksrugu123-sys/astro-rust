@@ -4,7 +4,7 @@ ASTRO-RUST targets Android ARM64 first. The Bevy application entry point is prep
 
 ## Toolchain
 
-The Android host project is in `android/` and uses Bevy's GameActivity integration. The current CI target is ARM64 (arm64-v8a), Android API 31+, JDK 21, Android SDK 37, and NDK 27.2.12479018.
+The Android host project is in `android/` and uses Bevy's GameActivity integration. The current CI target is ARM64 (arm64-v8a), Android API 31+, JDK 21, Android SDK 36, and NDK 27.2.12479018.
 
 ## Build an APK with GitHub Actions
 
