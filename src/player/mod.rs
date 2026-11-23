@@ -1,6 +1,6 @@
 //! Radial-gravity player physics and mobile controls for spherical planets.
 
-use bevy::{input::mouse::AccumulatedMouseMotion, prelude::*};
+use bevy::{input::mouse::AccumulatedMouseMotion, prelude::*, window::PrimaryWindow};
 
 pub mod math;
 
@@ -158,7 +158,7 @@ pub fn spawn_touch_hud(mut commands: Commands) {
             ..default()
         },
         Text::new("REG 0   ROCK 0   CU 0   FE 0"),
-        TextFont { font_size: 16.0, ..default() },
+        TextFont { font_size: FontSize::Px(16.0), ..default() },
         TextColor(Color::WHITE),
         InventoryHud,
         Name::new("Inventory HUD"),
@@ -212,7 +212,7 @@ pub fn spawn_touch_hud(mut commands: Commands) {
         BorderColor::all(Color::srgba(0.72, 1.0, 0.80, 0.9)),
         children![(
             Text::new("MINE"),
-            TextFont { font_size: 17.0, ..default() },
+            TextFont { font_size: FontSize::Px(17.0), ..default() },
             TextColor(Color::WHITE),
         )],
         Name::new("Mine Button"),
@@ -259,7 +259,7 @@ pub fn spawn_touch_hud(mut commands: Commands) {
         children![(
             Text::new("JUMP"),
             TextFont {
-                font_size: 19.0,
+                font_size: FontSize::Px(19.0),
                 ..default()
             },
             TextColor(Color::WHITE),
@@ -397,7 +397,8 @@ pub fn move_player_on_planet(
     let has_movement = direction.length_squared() > 1.0e-6;
 
     if motion.grounded {
-        motion.velocity -= frame.up * motion.velocity.dot(frame.up);
+        let radial_velocity = motion.velocity.dot(frame.up);
+        motion.velocity -= frame.up * radial_velocity;
     }
 
     if has_movement {
