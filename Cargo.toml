@@ -16,6 +16,8 @@ path = "src/main.rs"
 
 [dependencies]
 bevy = { version = "0.20", features = ["android-game-activity"] }
+jni = "0.21"
+tracing-subscriber = { version = "0.3", features = ["fmt"] }
 
 [profile.dev]
 opt-level = 1
