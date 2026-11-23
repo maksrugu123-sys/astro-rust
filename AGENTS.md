@@ -69,7 +69,7 @@ Do not claim the disk cache is fully verified until persistence tests cover inte
 - Do not expose a generated baseline chunk before any referenced disk edit record has been loaded and validated.
 - Keep checksum/version/coordinate validation in the save subsystem; the I/O worker returns raw bytes only.
 - Untouched manifest references must be preserved during incremental saves.
-- Autosave submits bounded asynchronous chunk writes. Suspend and exit enqueue a final transaction, but completion is not guaranteed if the OS terminates the process before workers finish. Never claim otherwise.
+- Autosave submits bounded asynchronous chunk writes. WillSuspend enqueues a final asynchronous transaction, but completion is not guaranteed if the OS terminates the process before workers finish. AppExit runs during teardown and does not start a transaction; rely on periodic autosave/WillSuspend. Never claim otherwise.
 
 
 ### Asynchronous chunk writes
