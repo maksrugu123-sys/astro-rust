@@ -383,9 +383,17 @@ impl TerrainWorld {
         &mut self,
         coord: ChunkCoord,
         edits: SavedChunkData,
-    ) {
+    ) -> bool {
         if !coord.is_representable() {
-            return;
+            return false;
+        }
+        if !edits.is_empty()
+            && !self.edited_cache.contains_key(&coord)
+            && self.edited_cache.len() >= MAX_CACHED_EDIT_CHUNKS
+        {
+            // Keep the coordinate disk-pending; the streaming system can retry
+            // after a successful save releases cached edit entries.
+            return false;
         }
         self.disk_pending.remove(&coord);
         self.cleared_edits.remove(&coord);
@@ -393,6 +401,7 @@ impl TerrainWorld {
             self.persisted_chunks.insert(coord);
             self.edited_cache.insert(coord, edits);
         }
+        true
     }
 
     pub(crate) fn is_chunk_disk_pending(&self, coord: ChunkCoord) -> bool {
@@ -471,9 +480,9 @@ impl TerrainWorld {
                 self.edited_cache.insert(coord, chunk.sparse_edits());
             }
         } else if self.persisted_chunks.remove(&coord) {
-            // The old disk version is stale, but remains authoritative until a
-            // manifest commit removes it. Keep generation blocked in the meantime.
-            self.disk_pending.insert(coord);
+            // Suppress the stale catalog record in this running session. The
+            // previous committed version remains recoverable after a crash until
+            // the next manifest commit removes it.
             self.cleared_edits.insert(coord);
         }
         for neighbor in chunk_neighbors(coord) {
