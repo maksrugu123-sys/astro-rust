@@ -1,4 +1,4 @@
-use bevy::prelude::*;
+use bevy::{prelude::*, winit::WinitSettings};
 
 mod chunk_io;
 mod planet;
