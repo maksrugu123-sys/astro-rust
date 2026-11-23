@@ -45,7 +45,7 @@
 
 ## Disk-backed chunk cache implementation contract
 
-The v5 runtime uses an index-first lazy-read path and a 128-entry cap for unloaded edit payloads. Unsaved edits are never dropped to enforce the cap: affected chunks remain resident until a successful save permits eviction. Save writes and manifest commits are still synchronous.
+The v5 runtime uses index-first lazy reads and a 128-entry cap for unloaded edit payloads. Unsaved edits are never dropped to enforce the cap. SaveStore now uses generation-tagged asynchronous chunk writes, bounded submissions, stale-snapshot rejection, and a manifest commit gate: no new manifest is installed until every chunk write succeeds. Manifest replacement itself remains synchronous.
 
 The next persistence implementation must preserve these invariants:
 
