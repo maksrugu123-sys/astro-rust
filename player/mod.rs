@@ -490,7 +490,11 @@ pub fn apply_terrain_actions(
     player_query: Query<&Transform, With<PlanetPlayer>>,
     mut terrain: ResMut<TerrainWorld>,
     mut inventory: ResMut<Inventory>,
+    mut gameplay: ResMut<crate::gameplay::GameState>,
 ) {
+    const MINE_ENERGY_COST: f32 = 0.35;
+    const PLACE_ENERGY_COST: f32 = 0.20;
+
     let mine = (controls.mine_pressed && !controls.mine_was_pressed)
         || keyboard.just_pressed(KeyCode::KeyE);
     let place = (controls.place_pressed && !controls.place_was_pressed)
@@ -511,16 +515,17 @@ pub fn apply_terrain_actions(
         return;
     };
 
-    if mine {
+    if mine && gameplay.energy >= MINE_ENERGY_COST {
         if let Some(kind) = terrain.get_block(voxel) {
             if kind.is_solid()
                 && inventory.can_collect(kind)
                 && terrain.set_block(voxel, VoxelKind::Air)
             {
                 inventory.collect(kind);
+                gameplay.energy = (gameplay.energy - MINE_ENERGY_COST).max(0.0);
             }
         }
-    } else if place {
+    } else if place && gameplay.energy >= PLACE_ENERGY_COST && inventory.regolith > 0 {
         let target = voxel + face_normal;
         let target_center = (target.as_vec3() + Vec3::splat(0.5)) * terrain.voxel_size;
         if target_center.distance(player.translation) >= 0.95
@@ -528,7 +533,10 @@ pub fn apply_terrain_actions(
         {
             // Do not let placement synchronously create an unloaded chunk:
             // streaming owns chunk creation and visual-entity registration.
-            terrain.set_block(target, VoxelKind::Regolith);
+            if terrain.set_block(target, VoxelKind::Regolith) {
+                inventory.regolith -= 1;
+                gameplay.energy = (gameplay.energy - PLACE_ENERGY_COST).max(0.0);
+            }
         }
     }
 }
