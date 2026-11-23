@@ -1,6 +1,7 @@
 use bevy::{prelude::*, winit::WinitSettings};
 
 mod chunk_io;
+mod gameplay;
 mod planet;
 mod player;
 mod save_system;
@@ -26,6 +27,8 @@ pub fn run_app() {
     .init_resource::<player::TouchControls>()
     .init_resource::<player::CameraOrbit>()
     .init_resource::<player::Inventory>()
+    .init_resource::<gameplay::GameState>()
+    .insert_resource(gameplay::GameplaySaveStore::discover())
     .init_resource::<terrain::TerrainWorld>()
     .init_resource::<terrain::TerrainGenerationQueue>()
     .init_resource::<chunk_io::ChunkIoQueue>()
@@ -40,6 +43,8 @@ pub fn run_app() {
             terrain::spawn_chunk_meshes,
             player::spawn_player,
             player::spawn_touch_hud,
+            gameplay::setup_gameplay_ui,
+            gameplay::load_gameplay_save,
         )
             .chain(),
     )
@@ -52,6 +57,11 @@ pub fn run_app() {
             player::update_follow_camera,
             player::apply_terrain_actions,
             player::update_inventory_hud,
+            gameplay::handle_actions,
+            gameplay::survival_tick,
+            gameplay::update_status_hud,
+            gameplay::autosave_gameplay,
+            gameplay::save_gameplay_on_suspend,
             save_system::SaveStore::process_chunk_io,
             terrain::stream_terrain_chunks,
             terrain::refresh_dirty_chunk_meshes,
@@ -60,7 +70,7 @@ pub fn run_app() {
         )
             .chain(),
     )
-    .add_systems(Last, save_system::save_world_on_exit);
+    .add_systems(Last, (save_system::save_world_on_exit, gameplay::save_gameplay_on_exit));
 
     app.run();
 }
