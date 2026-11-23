@@ -1,6 +1,6 @@
 //! Versioned, checksummed persistence for sparse terrain edits.
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     fs::{self, File},
     io::{Read, Write},
     path::{Path, PathBuf},
@@ -27,6 +27,15 @@ const MAX_SAVED_CHUNKS: usize = 8_192;
 const MAX_CHUNK_FILE_BYTES: u64 = (8 + 4 + 12 + 2 + CHUNK_BLOCKS * 3 + 8) as u64;
 const MAX_MANIFEST_BYTES: u64 = (8 + 4 + 8 + 4 + 4 + 8 + 4 + MAX_SAVED_CHUNKS * 20 + 8) as u64;
 const AUTOSAVE_SECONDS: f32 = 15.0;
+const MAX_ASYNC_WRITES_PER_FRAME: usize = 4;
+
+struct PendingChunkWrite { coord: ChunkCoord, temp_path: PathBuf, final_path: PathBuf, bytes: Vec<u8> }
+struct SaveTransaction {
+ generation: u64, revision: u64, inventory: [u16; 4], manifest_bytes: Vec<u8>,
+ manifest_temp: PathBuf, manifest_path: PathBuf, chunk_directory: PathBuf,
+ records: HashMap<ChunkCoord, u64>, previous_catalog: HashMap<ChunkCoord, u64>,
+ writes: VecDeque<PendingChunkWrite>, in_flight: HashSet<ChunkCoord>, saved_coords: Vec<ChunkCoord>,
+}
 
 #[derive(Resource)]
 pub struct SaveStore {
@@ -39,6 +48,8 @@ pub struct SaveStore {
     failed_reads: HashSet<ChunkCoord>,
     cache_deferred_reads: HashSet<ChunkCoord>,
     load_failed: bool,
+    pending_save: Option<SaveTransaction>,
+    next_generation: u64,
 }
 
 impl SaveStore {
@@ -69,6 +80,8 @@ impl SaveStore {
             failed_reads: HashSet::new(),
             cache_deferred_reads: HashSet::new(),
             load_failed: false,
+            pending_save: None,
+            next_generation: 1,
         }
     }
 
@@ -156,123 +169,131 @@ impl SaveStore {
         true
     }
 
-    /// Validates completed disk reads before making their edits available to terrain.
-    pub fn process_chunk_io(
-        mut io: ResMut<ChunkIoQueue>,
-        mut store: ResMut<SaveStore>,
-        mut terrain: ResMut<TerrainWorld>,
-    ) {
+    /// Processes bounded I/O completions and advances the active save transaction.
+    pub fn process_chunk_io(mut io: ResMut<ChunkIoQueue>, mut store: ResMut<SaveStore>, mut terrain: ResMut<TerrainWorld>) {
         for completion in io.collect_completed(8) {
-            if completion.operation != ChunkIoOperation::Read {
-                continue;
-            }
             let coord = completion.coord;
-            let Some(expected_checksum) = store.catalog.get(&coord).copied() else {
-                continue;
-            };
-            match completion.result.and_then(|bytes| decode_chunk(&bytes, coord, expected_checksum)) {
-                Ok(edits) => {
-                    if terrain.cache_saved_chunk_edits(coord, edits) {
-                        store.loaded_records.insert(coord);
-                        store.failed_reads.remove(&coord);
-                        store.cache_deferred_reads.remove(&coord);
-                    } else {
-                        // Cache pressure is temporary; hold this saved coordinate
-                        // blocked until streaming safely evicts an inactive durable entry.
-                        store.cache_deferred_reads.insert(coord);
+            match completion.operation {
+                ChunkIoOperation::Read => {
+                    let Some(expected) = store.catalog.get(&coord).copied() else { continue; };
+                    match completion.result.and_then(|bytes| decode_chunk(&bytes, coord, expected)) {
+                        Ok(edits) if terrain.cache_saved_chunk_edits(coord, edits) => {
+                            store.loaded_records.insert(coord);
+                            store.failed_reads.remove(&coord);
+                            store.cache_deferred_reads.remove(&coord);
+                        }
+                        Ok(_) => { store.cache_deferred_reads.insert(coord); }
+                        Err(error) => {
+                            store.failed_reads.insert(coord);
+                            warn!("Saved chunk {},{},{} remains hidden: {error}", coord.x, coord.y, coord.z);
+                        }
                     }
                 }
-                Err(error) => {
-                    store.failed_reads.insert(coord);
-                    warn!("Saved ASTRO-RUST chunk {},{},{} is unavailable and remains hidden: {error}", coord.x, coord.y, coord.z);
+                ChunkIoOperation::Write => {
+                    let Some(tx) = store.pending_save.as_mut() else { continue; };
+                    if !tx.in_flight.remove(&coord) { continue; }
+                    if let Err(error) = completion.result {
+                        warn!("Save generation {} failed on chunk {},{},{}: {error}", tx.generation, coord.x, coord.y, coord.z);
+                        store.pending_save = None;
+                    }
                 }
+            }
+        }
+
+        // A changed world invalidates the captured snapshot. Its content-addressed
+        // chunk files are harmless orphans; the old manifest remains authoritative.
+        if store.pending_save.as_ref().is_some_and(|tx| tx.revision != terrain.edit_revision()) {
+            store.pending_save = None;
+        }
+
+        if let Some(tx) = store.pending_save.as_mut() {
+            let mut submitted = 0;
+            while submitted < MAX_ASYNC_WRITES_PER_FRAME {
+                let Some(job) = tx.writes.pop_front() else { break; };
+                if io.request_write(job.coord, job.temp_path.clone(), job.final_path.clone(), job.bytes.clone()) {
+                    tx.in_flight.insert(job.coord);
+                    submitted += 1;
+                } else {
+                    tx.writes.push_front(job);
+                    break;
+                }
+            }
+        }
+
+        let ready = store.pending_save.as_ref().is_some_and(|tx| tx.writes.is_empty() && tx.in_flight.is_empty());
+        if ready {
+            let tx = store.pending_save.take().expect("save transaction checked");
+            match write_atomic(&tx.manifest_temp, &tx.manifest_path, &tx.manifest_bytes) {
+                Ok(()) => {
+                    let retained: HashSet<String> = tx.records.iter().map(|(c, h)| SaveStore::chunk_filename(*c, *h)).collect();
+                    store.catalog = tx.records;
+                    store.loaded_records.retain(|c| store.catalog.contains_key(c) && terrain.is_chunk_loaded(*c));
+                    for coord in tx.previous_catalog.keys() {
+                        if !store.catalog.contains_key(coord) {
+                            terrain.clear_saved_chunk(*coord);
+                            store.loaded_records.remove(coord);
+                            store.failed_reads.remove(coord);
+                            store.cache_deferred_reads.remove(coord);
+                        }
+                    }
+                    for coord in tx.saved_coords {
+                        terrain.mark_saved_chunk(coord);
+                        if terrain.is_chunk_loaded(coord) { store.loaded_records.insert(coord); }
+                        else { store.loaded_records.remove(&coord); }
+                        store.failed_reads.remove(&coord);
+                        store.cache_deferred_reads.remove(&coord);
+                    }
+                    if let Ok(entries) = fs::read_dir(&tx.chunk_directory) {
+                        for entry in entries.flatten() {
+                            let name = entry.file_name().to_string_lossy().into_owned();
+                            if name.ends_with(".chunk") && !retained.contains(&name) { let _ = fs::remove_file(entry.path()); }
+                        }
+                    }
+                    store.last_saved_revision = Some(tx.revision);
+                    store.last_saved_inventory = Some(tx.inventory);
+                    info!("ASTRO-RUST save generation {} committed", tx.generation);
+                }
+                Err(error) => warn!("Manifest commit failed; previous save remains active: {error}"),
             }
         }
     }
 
-    fn save(&mut self, terrain: &mut TerrainWorld, inventory: &Inventory) -> Result<(), String> {
-        if self.load_failed {
-            return Err("An existing world save could not be validated; refusing to overwrite it".into());
-        }
-        let Some(directory) = self.directory.as_ref() else {
-            return Err("No writable application data directory is available".into());
-        };
+    fn begin_save(&mut self, terrain: &TerrainWorld, inventory: &Inventory) -> Result<(), String> {
+        if self.load_failed { return Err("Existing save failed validation; refusing overwrite".into()); }
+        if self.pending_save.is_some() { return Ok(()); }
+        let directory = self.directory.as_ref().ok_or("No writable application data directory is available")?;
         let chunks = terrain.export_edited_chunks();
         let previous_catalog = self.catalog.clone();
         let mut records = self.catalog.clone();
-
-        // If a catalogued chunk is resident and no longer edited, its old disk
-        // record must be removed. Unloaded records are retained without reading them.
-        for coord in terrain.cleared_chunk_coords() {
-            records.remove(&coord);
+        for coord in terrain.cleared_chunk_coords() { records.remove(&coord); }
+        let old: Vec<_> = records.keys().copied().collect();
+        for coord in old {
+            if terrain.is_chunk_loaded(coord) && !terrain.is_chunk_edited(coord) { records.remove(&coord); }
         }
-        let catalog_coords: Vec<_> = records.keys().copied().collect();
-        for coord in catalog_coords {
-            if terrain.is_chunk_loaded(coord) && !terrain.is_chunk_edited(coord) {
-                records.remove(&coord);
-            }
+        if records.len().saturating_add(chunks.len()) > MAX_SAVED_CHUNKS {
+            return Err(format!("World exceeds the {MAX_SAVED_CHUNKS}-chunk save limit"));
         }
-
         let chunk_directory = directory.join(CHUNK_DIRECTORY);
-        fs::create_dir_all(&chunk_directory)
-            .map_err(|e| format!("Cannot create chunk directory: {e}"))?;
+        let mut writes = VecDeque::with_capacity(chunks.len());
+        let mut saved_coords = Vec::with_capacity(chunks.len());
         for (coord, edits) in &chunks {
             let bytes = encode_chunk(*coord, edits)?;
             let checksum = read_u64(&bytes, bytes.len() - 8)?;
-            let path = Self::chunk_path(&chunk_directory, *coord, checksum);
-            let temp_path = path.with_extension("chunk.tmp");
-            write_atomic(&temp_path, &path, &bytes)
-                .map_err(|e| format!("Cannot persist chunk {},{},{}: {e}", coord.x, coord.y, coord.z))?;
+            let final_path = Self::chunk_path(&chunk_directory, *coord, checksum);
+            let temp_path = final_path.with_extension(format!("{checksum:016x}.{}.tmp", self.next_generation));
             records.insert(*coord, checksum);
+            writes.push_back(PendingChunkWrite { coord: *coord, temp_path, final_path, bytes });
+            saved_coords.push(*coord);
         }
-        if records.len() > MAX_SAVED_CHUNKS {
-            return Err(format!("World contains {} edited chunks; save limit is {}", records.len(), MAX_SAVED_CHUNKS));
-        }
-
-        let manifest = encode_manifest_records(terrain, &records, inventory)?;
-        let manifest_path = directory.join(MANIFEST_FILE);
-        let temp_manifest = directory.join(MANIFEST_TEMP);
-        write_atomic(&temp_manifest, &manifest_path, &manifest)
-            .map_err(|e| format!("Cannot commit world manifest: {e}"))?;
-
-        // The manifest is the commit point. Update the in-memory index immediately;
-        // cleanup is best-effort and must never turn a committed save into a reported failure.
-        let retained: HashSet<String> = records.iter()
-            .map(|(coord, checksum)| Self::chunk_filename(*coord, *checksum))
-            .collect();
-        self.catalog = records.clone();
-        self.loaded_records.retain(|coord| {
-            self.catalog.contains_key(coord) && terrain.is_chunk_loaded(*coord)
+        let manifest_bytes = encode_manifest_records(terrain, &records, inventory)?;
+        let generation = self.next_generation;
+        self.next_generation = self.next_generation.wrapping_add(1).max(1);
+        self.pending_save = Some(SaveTransaction {
+            generation, revision: terrain.edit_revision(), inventory: inventory.snapshot(),
+            manifest_bytes, manifest_temp: directory.join(format!("{MANIFEST_TEMP}.{generation}")),
+            manifest_path: directory.join(MANIFEST_FILE), chunk_directory, records,
+            previous_catalog, writes, in_flight: HashSet::new(), saved_coords,
         });
-        // A successful save may have released unsaved cache entries. Retry both
-        // capacity-deferred and previously failed reads against the current catalog.
-        self.failed_reads.clear();
-        for coord in previous_catalog.keys() {
-            if !self.catalog.contains_key(coord) {
-                terrain.clear_saved_chunk(*coord);
-                self.loaded_records.remove(coord);
-                self.failed_reads.remove(coord);
-                self.cache_deferred_reads.remove(coord);
-            }
-        }
-        for (coord, _) in &chunks {
-            terrain.mark_saved_chunk(*coord);
-            if terrain.is_chunk_loaded(*coord) {
-                self.loaded_records.insert(*coord);
-            } else {
-                self.loaded_records.remove(coord);
-            }
-            self.failed_reads.remove(coord);
-            self.cache_deferred_reads.remove(coord);
-        }
-        if let Ok(entries) = fs::read_dir(&chunk_directory) {
-            for entry in entries.flatten() {
-                let name = entry.file_name().to_string_lossy().into_owned();
-                if name.ends_with(".chunk") && !retained.contains(&name) {
-                    let _ = fs::remove_file(entry.path());
-                }
-            }
-        }
         Ok(())
     }
 }
@@ -339,13 +360,10 @@ pub fn autosave_world(
     if !store.timer.just_finished() || world_is_current {
         return;
     }
-    match store.save(&mut terrain, &inventory) {
-        Ok(()) => {
-            store.last_saved_revision = Some(revision);
-            store.last_saved_inventory = Some(inventory_snapshot);
-            info!("ASTRO-RUST world autosaved");
+    if store.pending_save.is_none() {
+        if let Err(error) = store.begin_save(&terrain, &inventory) {
+            warn!("ASTRO-RUST autosave could not start: {error}");
         }
-        Err(error) => warn!("ASTRO-RUST autosave failed: {error}"),
     }
 }
 
@@ -366,13 +384,12 @@ pub fn save_world_on_suspend(
     {
         return;
     }
-    match store.save(&mut terrain, &inventory) {
-        Ok(()) => {
-            store.last_saved_revision = Some(terrain.edit_revision());
-            store.last_saved_inventory = Some(inventory_snapshot);
-            info!("ASTRO-RUST world saved before suspend");
+    if store.pending_save.is_none() {
+        if let Err(error) = store.begin_save(&terrain, &inventory) {
+            warn!("ASTRO-RUST suspend save could not be queued: {error}");
+        } else {
+            warn!("Suspend save queued asynchronously; OS background execution may be limited");
         }
-        Err(error) => warn!("ASTRO-RUST suspend save failed: {error}"),
     }
 }
 
@@ -391,13 +408,10 @@ pub fn save_world_on_exit(
     {
         return;
     }
-    match store.save(&mut terrain, &inventory) {
-        Ok(()) => {
-            store.last_saved_revision = Some(terrain.edit_revision());
-            store.last_saved_inventory = Some(inventory_snapshot);
-            info!("ASTRO-RUST world saved on exit");
-        }
-        Err(error) => warn!("ASTRO-RUST final save failed: {error}"),
+    if let Err(error) = store.begin_save(&terrain, &inventory) {
+        warn!("Final save could not be queued: {error}");
+    } else {
+        warn!("Final save queued asynchronously; abrupt process termination may precede commit");
     }
 }
 
