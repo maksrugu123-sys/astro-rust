@@ -344,7 +344,7 @@ pub fn save_world_on_suspend(
     {
         return;
     }
-    match store.save(&terrain, &inventory) {
+    match store.save(&mut terrain, &inventory) {
         Ok(()) => {
             store.last_saved_revision = Some(terrain.edit_revision());
             store.last_saved_inventory = Some(inventory_snapshot);
@@ -369,7 +369,7 @@ pub fn save_world_on_exit(
     {
         return;
     }
-    match store.save(&terrain, &inventory) {
+    match store.save(&mut terrain, &inventory) {
         Ok(()) => {
             store.last_saved_revision = Some(terrain.edit_revision());
             store.last_saved_inventory = Some(inventory_snapshot);
