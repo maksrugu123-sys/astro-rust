@@ -749,7 +749,7 @@ impl TerrainWorld {
 }
 
 #[derive(Component)]
-struct TerrainChunkVisual {
+pub(crate) struct TerrainChunkVisual {
     coord: ChunkCoord,
     mesh: Handle<Mesh>,
 }
