@@ -119,7 +119,10 @@ impl Default for ChunkIoQueue {
 impl ChunkIoQueue {
     /// Enqueue one disk read. The bounded queue rejects overload without blocking.
     pub(crate) fn request_read(&mut self, coord: ChunkCoord, path: PathBuf) -> bool {
-        if !coord.is_representable() || !self.pending_reads.insert(coord) {
+        if !coord.is_representable()
+            || self.pending_writes.contains(&coord)
+            || !self.pending_reads.insert(coord)
+        {
             return false;
         }
         match self.sender.try_send(ChunkIoRequest::Read { coord, path }) {
@@ -141,8 +144,10 @@ impl ChunkIoQueue {
         bytes: Vec<u8>,
     ) -> bool {
         if !coord.is_representable()
+            || temp_path == final_path
             || bytes.is_empty()
             || bytes.len() as u64 > MAX_CHUNK_IO_BYTES
+            || self.pending_reads.contains(&coord)
             || !self.pending_writes.insert(coord)
         {
             return false;
@@ -199,18 +204,25 @@ fn execute_request(request: ChunkIoRequest) -> Result<Vec<u8>, String> {
     match request {
         ChunkIoRequest::Read { path, .. } => read_bounded(&path),
         ChunkIoRequest::Write { temp_path, final_path, bytes, .. } => {
-            if let Some(parent) = final_path.parent() {
-                fs::create_dir_all(parent)
-                    .map_err(|error| format!("Cannot create chunk directory: {error}"))?;
+            let result = (|| {
+                if let Some(parent) = final_path.parent() {
+                    fs::create_dir_all(parent)
+                        .map_err(|error| format!("Cannot create chunk directory: {error}"))?;
+                }
+                let mut file = File::create(&temp_path)
+                    .map_err(|error| format!("Cannot create temporary chunk file: {error}"))?;
+                file.write_all(&bytes)
+                    .and_then(|_| file.sync_all())
+                    .map_err(|error| format!("Cannot flush temporary chunk file: {error}"))?;
+                drop(file);
+                fs::rename(&temp_path, &final_path)
+                    .map_err(|error| format!("Cannot commit immutable chunk file: {error}"))?;
+                Ok(Vec::new())
+            })();
+            if result.is_err() {
+                let _ = fs::remove_file(&temp_path);
             }
-            let mut file = File::create(&temp_path)
-                .map_err(|error| format!("Cannot create temporary chunk file: {error}"))?;
-            file.write_all(&bytes)
-                .and_then(|_| file.sync_all())
-                .map_err(|error| format!("Cannot flush temporary chunk file: {error}"))?;
-            fs::rename(&temp_path, &final_path)
-                .map_err(|error| format!("Cannot commit immutable chunk file: {error}"))?;
-            Ok(Vec::new())
+            result
         }
     }
 }
@@ -248,6 +260,22 @@ mod tests {
     fn bounded_reader_rejects_missing_files() {
         let result = read_bounded(&PathBuf::from("this-file-should-not-exist.astrochunk"));
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn write_requests_reject_empty_and_oversized_payloads() {
+        let mut queue = ChunkIoQueue::default();
+        let coord = ChunkCoord { x: 1, y: 2, z: 3 };
+        let temp = PathBuf::from("unused.chunk.tmp");
+        let final_path = PathBuf::from("unused.chunk");
+        assert!(!queue.request_write(coord, temp.clone(), final_path.clone(), Vec::new()));
+        assert!(!queue.request_write(
+            coord,
+            temp,
+            final_path,
+            vec![0; MAX_CHUNK_IO_BYTES as usize + 1],
+        ));
+        assert_eq!(queue.pending_count(), 0);
     }
 
     #[test]
