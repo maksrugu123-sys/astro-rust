@@ -1128,6 +1128,19 @@ mod tests {
     }
 
     #[test]
+    fn default_planet_has_large_radius_and_preloaded_surface_column() {
+        let mut world = TerrainWorld::default();
+        assert_eq!(world.base_radius, 24.0);
+        assert_eq!(world.voxel_size, 0.5);
+        let surface_chunk = (world.base_radius / (world.voxel_size * CHUNK_SIZE as f32)).floor() as i32;
+        for y in 0..=surface_chunk {
+            world.ensure_chunk(ChunkCoord { x: 0, y, z: 0 });
+        }
+        let surface = world.surface_radius(Vec3::Y).expect("radial startup column must contain the surface");
+        assert!((world.base_radius - world.voxel_size * 3.0..=world.base_radius + world.voxel_size * 3.0).contains(&surface));
+    }
+
+    #[test]
     fn negative_voxel_coordinates_map_to_negative_chunks() {
         let coord = ChunkCoord::from_voxel(IVec3::new(-1, -16, -17));
         assert_eq!(coord, ChunkCoord { x: -1, y: -1, z: -2 });
