@@ -1,4 +1,0 @@
-# Android ARM64 target used by current Android phones.
-# Install with: rustup target add aarch64-linux-android
-[target.aarch64-linux-android]
-rustflags = ["-C", "link-arg=-Wl,--allow-shlib-undefined"]

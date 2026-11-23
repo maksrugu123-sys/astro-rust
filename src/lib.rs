@@ -1,6 +1,7 @@
 use bevy::{prelude::*, winit::WinitSettings};
 
 mod chunk_io;
+mod gameplay;
 mod planet;
 mod player;
 mod save_system;
@@ -26,6 +27,7 @@ pub fn run_app() {
     .init_resource::<player::TouchControls>()
     .init_resource::<player::CameraOrbit>()
     .init_resource::<player::Inventory>()
+    .init_resource::<gameplay::GameState>()
     .init_resource::<terrain::TerrainWorld>()
     .init_resource::<terrain::TerrainGenerationQueue>()
     .init_resource::<chunk_io::ChunkIoQueue>()
@@ -40,6 +42,7 @@ pub fn run_app() {
             terrain::spawn_chunk_meshes,
             player::spawn_player,
             player::spawn_touch_hud,
+            gameplay::setup_gameplay_ui,
         )
             .chain(),
     )
@@ -52,6 +55,9 @@ pub fn run_app() {
             player::update_follow_camera,
             player::apply_terrain_actions,
             player::update_inventory_hud,
+            gameplay::handle_actions,
+            gameplay::survival_tick,
+            gameplay::update_status_hud,
             save_system::SaveStore::process_chunk_io,
             terrain::stream_terrain_chunks,
             terrain::refresh_dirty_chunk_meshes,
