@@ -165,6 +165,11 @@ impl SaveStore {
                 Ok(edits) => {
                     if terrain.cache_saved_chunk_edits(coord, edits) {
                         store.loaded_records.insert(coord);
+                        store.failed_reads.remove(&coord);
+                    } else {
+                        // Cache pressure is temporary; hold this saved coordinate
+                        // blocked until a successful save frees or evicts a slot.
+                        store.failed_reads.insert(coord);
                     }
                 }
                 Err(error) => {
@@ -229,7 +234,9 @@ impl SaveStore {
         self.loaded_records.retain(|coord| {
             self.catalog.contains_key(coord) && terrain.is_chunk_loaded(*coord)
         });
-        self.failed_reads.retain(|coord| self.catalog.contains_key(coord));
+        // A successful save may have released unsaved cache entries. Retry both
+        // capacity-deferred and previously failed reads against the current catalog.
+        self.failed_reads.clear();
         for coord in previous_catalog.keys() {
             if !self.catalog.contains_key(coord) {
                 terrain.clear_saved_chunk(*coord);
