@@ -30,6 +30,12 @@ Create a compact but connected first-playable loop for Android: explore a spheri
 - Solar array: 4 rock, 8 copper and 6 iron. Restores energy within a 10-unit radius.
 - Deployable counts are capped to keep prototype entity counts bounded.
 
+## Tool costs
+
+- Mining costs 0.35 suit energy per successfully removed block.
+- Placing a regolith block costs 0.20 suit energy and consumes one regolith from inventory.
+- Failed actions do not consume energy or materials.
+
 ## Current controls
 
 - Existing left virtual joystick: movement.

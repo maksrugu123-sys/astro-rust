@@ -27,18 +27,18 @@ The current development branch contains source implementations for:
 - solar arrays that recharge suit energy nearby;
 - versioned, checksummed sparse terrain and material-inventory persistence; a separate checksummed gameplay sidecar now saves survival meters, oxygen canisters, elapsed time, biome and deployed equipment positions.
 
-The gameplay additions are source-level work only. They have **not** yet been compiled, tested, packaged as an APK, or verified on a phone. The gameplay sidecar is implemented in source but has not been verified by a build or device run.
+Terrain tools now consume suit energy (mining 0.35, placement 0.20) and block placement consumes one regolith. The gameplay additions are source-level work only. They have **not** yet been compiled, tested, packaged as an APK, or verified on a phone. The gameplay sidecar is implemented in source but has not been verified by a build or device run.
 
 ## Repository map
 
 | Area | Responsibility |
 | --- | --- |
-| `src/planet` | Spherical planet math and scene |
-| `src/terrain` | Voxel chunks, generation, meshing and edits |
-| `src/player` | Radial movement, camera and touch controls |
-| `src/gameplay.rs` | Biomes, survival, crafting and deployable structures |
-| `src/save_system.rs` | Sparse world and inventory persistence |
-| `src/chunk_io.rs` | Bounded asynchronous chunk file I/O |
+| `planet` | Spherical planet math and scene |
+| `terrain` | Voxel chunks, generation, meshing and edits |
+| `player` | Radial movement, camera and touch controls |
+| `gameplay.rs` | Biomes, survival, crafting and deployable structures |
+| `save_system.rs` | Sparse world and inventory persistence |
+| `chunk_io.rs` | Bounded asynchronous chunk file I/O |
 
 See [DEVELOPMENT.md](DEVELOPMENT.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), and [docs/GAMEPLAY_LOOP_V1.md](docs/GAMEPLAY_LOOP_V1.md).
 
