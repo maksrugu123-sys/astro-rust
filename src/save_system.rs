@@ -177,12 +177,15 @@ impl SaveStore {
                 ChunkIoOperation::Read => {
                     let Some(expected) = store.catalog.get(&coord).copied() else { continue; };
                     match completion.result.and_then(|bytes| decode_chunk(&bytes, coord, expected)) {
-                        Ok(edits) if terrain.cache_saved_chunk_edits(coord, edits) => {
-                            store.loaded_records.insert(coord);
-                            store.failed_reads.remove(&coord);
-                            store.cache_deferred_reads.remove(&coord);
+                        Ok(edits) => {
+                            if terrain.cache_saved_chunk_edits(coord, edits) {
+                                store.loaded_records.insert(coord);
+                                store.failed_reads.remove(&coord);
+                                store.cache_deferred_reads.remove(&coord);
+                            } else {
+                                store.cache_deferred_reads.insert(coord);
+                            }
                         }
-                        Ok(_) => { store.cache_deferred_reads.insert(coord); }
                         Err(error) => {
                             store.failed_reads.insert(coord);
                             warn!("Saved chunk {},{},{} remains hidden: {error}", coord.x, coord.y, coord.z);
@@ -227,7 +230,8 @@ impl SaveStore {
                 Ok(()) => {
                     let retained: HashSet<String> = tx.records.iter().map(|(c, h)| SaveStore::chunk_filename(*c, *h)).collect();
                     store.catalog = tx.records;
-                    store.loaded_records.retain(|c| store.catalog.contains_key(c) && terrain.is_chunk_loaded(*c));
+                    let catalog_coords: HashSet<ChunkCoord> = store.catalog.keys().copied().collect();
+                    store.loaded_records.retain(|c| catalog_coords.contains(c) && terrain.is_chunk_loaded(*c));
                     for coord in tx.previous_catalog.keys() {
                         if !store.catalog.contains_key(coord) {
                             terrain.clear_saved_chunk(*coord);
