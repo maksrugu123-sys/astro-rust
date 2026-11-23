@@ -235,7 +235,7 @@ pub fn spawn_touch_hud(mut commands: Commands) {
         BorderColor::all(Color::srgba(0.72, 0.84, 1.0, 0.9)),
         children![(
             Text::new("PLACE"),
-            TextFont { font_size: 17.0, ..default() },
+            TextFont { font_size: FontSize::Px(17.0), ..default() },
             TextColor(Color::WHITE),
         )],
         Name::new("Place Button"),
