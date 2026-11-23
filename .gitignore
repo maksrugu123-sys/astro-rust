@@ -6,3 +6,4 @@
 /saves/
 *.tmp
 *.astrochunk
+/android/app/src/main/jniLibs/
