@@ -312,7 +312,8 @@ pub struct TerrainWorld {
 
 impl Default for TerrainWorld {
     fn default() -> Self {
-        Self::new(0xA57_2026, 0.25, 3.0)
+        // Eight times the previous radius; a coarser voxel keeps Android memory bounded.
+        Self::new(0xA57_2026, 0.5, 24.0)
     }
 }
 
@@ -771,14 +772,11 @@ pub fn setup_terrain_material(
     commands.insert_resource(TerrainMaterial(material));
 }
 
-/// Preloads the eight chunks whose bounds surround the planet origin.
+/// Preloads the radial column from the core to the north surface before player spawn.
 pub fn generate_starting_chunks(mut terrain: ResMut<TerrainWorld>) {
-    for z in -1..=0 {
-        for y in -1..=0 {
-            for x in -1..=0 {
-                terrain.ensure_chunk(ChunkCoord { x, y, z });
-            }
-        }
+    let surface_chunk = (terrain.base_radius / (terrain.voxel_size * CHUNK_SIZE as f32)).floor() as i32;
+    for y in 0..=surface_chunk {
+        terrain.ensure_chunk(ChunkCoord { x: 0, y, z: 0 });
     }
 }
 
