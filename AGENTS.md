@@ -45,14 +45,14 @@
 
 ## Disk-backed chunk cache implementation contract
 
-The v5 runtime now uses an index-first lazy-read path for saved chunks, but it is not yet a bounded disk-backed cache. Startup payload reads are lazy; autosave and edit retention are not memory-bounded, and save writes are still synchronous.
+The v5 runtime uses an index-first lazy-read path and a 128-entry cap for unloaded edit payloads. Unsaved edits are never dropped to enforce the cap: affected chunks remain resident until a successful save permits eviction. Save writes and manifest commits are still synchronous.
 
 The next persistence implementation must preserve these invariants:
 
 1. Startup reads and validates the manifest index without decoding every chunk record.
 2. A chunk with a disk-backed edit record must not become visible or queryable as generated baseline terrain until its edit record has been loaded and validated.
 3. Disk reads and writes run on bounded worker capacity. Main-thread systems only submit requests, consume completed results, and update Bevy assets.
-4. The unloaded-edit cache has an explicit memory budget and deterministic eviction policy. Eviction is permitted only after the corresponding immutable chunk record is safely committed and referenced by the active manifest.
+4. The unloaded-edit cache has an explicit 128-chunk bound. Eviction is permitted only after the corresponding immutable chunk record is safely committed and referenced by the active manifest; if the cache is full, unsaved edited chunks must remain resident.
 5. A dirty in-memory record always takes precedence over an older disk-index entry. Failed writes retain the dirty record and remain retryable.
 6. Saving a new manifest must preserve untouched chunk references from the prior manifest; it must not require reading all untouched chunk payloads into RAM.
 7. The manifest remains the commit point. New immutable records are flushed before manifest replacement; cleanup happens only after a successful commit.
@@ -60,12 +60,12 @@ The next persistence implementation must preserve these invariants:
 9. All queues, in-flight reads, pending writes, decoded payloads, and per-frame completions have explicit limits.
 10. Keep world coordinates signed 32-bit only within their current documented representable range. A 64-bit coordinate/floating-origin design is a separate prerequisite before expanding that range.
 
-Do not claim the disk cache is complete until the runtime uses this index-first, lazy-read, bounded-eviction flow and the persistence tests cover interrupted writes, failed reads/writes, eviction/reload, and manifest preservation.
+Do not claim the disk cache is complete until the runtime uses this index-first, lazy-read, bounded-eviction flow and the persistence tests cover interrupted writes, failed reads/writes, eviction/reload, and manifest preservation. The current bounded cache and low-level write queue are groundwork; autosave still writes synchronously.
 
 
 ## Chunk I/O queue status
 
-- `src/chunk_io.rs` is connected to manifest-indexed terrain streaming for asynchronous saved-chunk reads; it is still not the completed bounded cache.
+- `src/chunk_io.rs` is connected to manifest-indexed terrain streaming for asynchronous saved-chunk reads and bounded immutable writes; the write path is not yet connected to autosave transactions.
 - Do not expose a generated baseline chunk before any referenced disk edit record has been loaded and validated.
 - Keep checksum/version/coordinate validation in the save subsystem; the I/O worker returns raw bytes only.
 - Untouched manifest references must be preserved during incremental saves.
@@ -76,6 +76,6 @@ Do not claim the disk cache is complete until the runtime uses this index-first,
 
 The bounded `ChunkIoQueue` now accepts immutable chunk-file write jobs as well as reads. It uses the same two workers and bounded request/completion channels. A write creates the parent directory, writes to a temporary path, flushes the file with `sync_all`, and renames it to its immutable final path. Completion is reported only after the rename succeeds. Queue saturation and duplicate in-flight writes are rejected without blocking the game thread; callers must retain dirty data and retry.
 
-This remains a low-level write primitive, not an active autosave pipeline. `SaveStore` still performs synchronous chunk writes and manifest commits. Startup now reads only the manifest index and fetches saved chunk payloads lazily through the bounded read queue. The unloaded edit cache still has no eviction budget. The new write-path test has been added but not executed.
+This remains a low-level write primitive, not an active autosave pipeline. `SaveStore` still performs synchronous chunk writes and manifest commits. Startup reads only the manifest index and fetches saved chunk payloads lazily through the bounded read queue. The unloaded edit cache is capped at 128 entries and evicts only after manifest commit. The write-path and cache-budget tests have been added but not executed.
 
 - The asynchronous chunk queue supports immutable writes. A successful chunk-write completion is required before its checksum reference may be committed into a new manifest. Failed writes must leave the old manifest valid and retain dirty data for retry.
