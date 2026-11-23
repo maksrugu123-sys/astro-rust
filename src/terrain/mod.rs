@@ -19,6 +19,8 @@ const CHUNK_VOLUME: usize = (CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE) as usize;
 const SURFACE_NOISE_VOXELS: f32 = 1.35;
 const STREAM_RADIUS: i32 = 1;
 const MAX_LOADED_CHUNKS: usize = 40;
+/// Unloaded, unsaved edit payloads are bounded. At the limit, edited chunks stay resident until saved.
+const MAX_CACHED_EDIT_CHUNKS: usize = 128;
 const MAX_CHUNK_LOADS_PER_FRAME: usize = 2;
 const MAX_PENDING_CHUNK_GENERATIONS: usize = 4;
 const MAX_CHUNK_UNLOADS_PER_FRAME: usize = 4;
@@ -300,6 +302,8 @@ pub struct TerrainWorld {
     edited_cache: HashMap<ChunkCoord, Vec<(u16, VoxelKind)>>,
     disk_pending: HashSet<ChunkCoord>,
     cleared_edits: HashSet<ChunkCoord>,
+    /// Coordinates whose current edit payload is already committed to the save catalog.
+    persisted_chunks: HashSet<ChunkCoord>,
     edit_revision: u64,
     pub seed: u64,
     pub voxel_size: f32,
@@ -319,6 +323,7 @@ impl TerrainWorld {
             edited_cache: HashMap::new(),
             disk_pending: HashSet::new(),
             cleared_edits: HashSet::new(),
+            persisted_chunks: HashSet::new(),
             edit_revision: 0,
             seed,
             voxel_size: voxel_size.max(0.01),
@@ -368,6 +373,7 @@ impl TerrainWorld {
         self.edited_cache.clear();
         self.disk_pending.clear();
         self.cleared_edits.clear();
+        self.persisted_chunks.clear();
         self.disk_pending.extend(saved_coords.into_iter().filter(|coord| coord.is_representable()));
         self.edit_revision = 1;
     }
@@ -384,12 +390,43 @@ impl TerrainWorld {
         self.disk_pending.remove(&coord);
         self.cleared_edits.remove(&coord);
         if !edits.is_empty() {
+            self.persisted_chunks.insert(coord);
             self.edited_cache.insert(coord, edits);
         }
     }
 
     pub(crate) fn is_chunk_disk_pending(&self, coord: ChunkCoord) -> bool {
         self.disk_pending.contains(&coord)
+    }
+
+    pub(crate) fn has_cached_edits(&self, coord: ChunkCoord) -> bool {
+        self.edited_cache.contains_key(&coord)
+    }
+
+    /// Marks the current chunk state as durable after its manifest commit.
+    /// Unloaded edit payloads can then be evicted and fetched lazily from disk.
+    pub(crate) fn mark_saved_chunk(&mut self, coord: ChunkCoord) {
+        if self.chunks.contains_key(&coord) {
+            if self.chunks.get(&coord).is_some_and(|chunk| chunk.edited) {
+                self.persisted_chunks.insert(coord);
+            }
+            return;
+        }
+        if self.edited_cache.remove(&coord).is_some() {
+            self.persisted_chunks.insert(coord);
+            self.disk_pending.insert(coord);
+        }
+    }
+
+    /// Releases a disk-backed coordinate after its manifest record was removed.
+    pub(crate) fn clear_saved_chunk(&mut self, coord: ChunkCoord) {
+        self.persisted_chunks.remove(&coord);
+        self.disk_pending.remove(&coord);
+        self.cleared_edits.remove(&coord);
+    }
+
+    pub(crate) fn cached_edit_chunk_count(&self) -> usize {
+        self.edited_cache.len()
     }
 
     pub(crate) fn is_chunk_loaded(&self, coord: ChunkCoord) -> bool {
@@ -415,11 +452,29 @@ impl TerrainWorld {
 
     /// Unloads a chunk while retaining player edits for a later reload.
     pub fn unload_chunk(&mut self, coord: ChunkCoord) -> bool {
+        let Some(existing) = self.chunks.get(&coord) else {
+            return false;
+        };
+        if existing.edited
+            && !self.persisted_chunks.contains(&coord)
+            && self.edited_cache.len() >= MAX_CACHED_EDIT_CHUNKS
+        {
+            return false;
+        }
         let Some(chunk) = self.chunks.remove(&coord) else {
             return false;
         };
         if chunk.edited {
-            self.edited_cache.insert(coord, chunk.sparse_edits());
+            if self.persisted_chunks.remove(&coord) {
+                self.disk_pending.insert(coord);
+            } else {
+                self.edited_cache.insert(coord, chunk.sparse_edits());
+            }
+        } else if self.persisted_chunks.remove(&coord) {
+            // The old disk version is stale, but remains authoritative until a
+            // manifest commit removes it. Keep generation blocked in the meantime.
+            self.disk_pending.insert(coord);
+            self.cleared_edits.insert(coord);
         }
         for neighbor in chunk_neighbors(coord) {
             if let Some(chunk) = self.chunks.get_mut(&neighbor) {
@@ -471,6 +526,7 @@ impl TerrainWorld {
             .is_some_and(|chunk| chunk.set(local, kind));
 
         if changed {
+            self.persisted_chunks.remove(&coord);
             self.edit_revision = self.edit_revision.wrapping_add(1);
             if self.chunks.get(&coord).is_some_and(|chunk| chunk.edited) {
                 self.cleared_edits.remove(&coord);
@@ -751,8 +807,12 @@ pub fn stream_terrain_chunks(
         .take(MAX_CHUNK_UNLOADS_PER_FRAME)
         .collect();
     for (entity, coord) in stale {
-        commands.entity(entity).despawn();
-        terrain.unload_chunk(coord);
+        if terrain.unload_chunk(coord) {
+            commands.entity(entity).despawn();
+            if terrain.is_chunk_disk_pending(coord) {
+                save_store.forget_loaded_chunk(coord);
+            }
+        }
     }
 
     generation.collect_completed();
@@ -806,6 +866,11 @@ pub fn stream_terrain_chunks(
             break;
         }
         if terrain.contains_chunk(coord) || generation.pending.contains(&coord) {
+            continue;
+        }
+        if terrain.has_cached_edits(coord) {
+            generation.request(coord, terrain.seed, terrain.voxel_size, terrain.base_radius);
+            requested += 1;
             continue;
         }
         if save_store.request_saved_chunk(coord, &mut chunk_io)
