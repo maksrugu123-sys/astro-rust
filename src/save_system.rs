@@ -395,24 +395,19 @@ pub fn save_world_on_suspend(
 
 pub fn save_world_on_exit(
     mut exits: MessageReader<AppExit>,
-    mut terrain: ResMut<TerrainWorld>,
+    terrain: Res<TerrainWorld>,
     inventory: Res<Inventory>,
-    mut store: ResMut<SaveStore>,
+    store: Res<SaveStore>,
 ) {
-    if exits.read().next().is_none() {
-        return;
-    }
-    let inventory_snapshot = inventory.snapshot();
+    if exits.read().next().is_none() { return; }
     if store.last_saved_revision == Some(terrain.edit_revision())
-        && store.last_saved_inventory == Some(inventory_snapshot)
+        && store.last_saved_inventory == Some(inventory.snapshot())
     {
         return;
     }
-    if let Err(error) = store.begin_save(&terrain, &inventory) {
-        warn!("Final save could not be queued: {error}");
-    } else {
-        warn!("Final save queued asynchronously; abrupt process termination may precede commit");
-    }
+    // Last runs immediately before app teardown. It cannot pump an asynchronous
+    // transaction to completion, so never pretend that merely enqueueing one is durable.
+    warn!("ASTRO-RUST has unsaved changes at AppExit; rely on the periodic autosave or WillSuspend transaction for durability");
 }
 
 struct ManifestData {
