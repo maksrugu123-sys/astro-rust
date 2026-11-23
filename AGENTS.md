@@ -60,7 +60,7 @@ The next persistence implementation must preserve these invariants:
 9. All queues, in-flight reads, pending writes, decoded payloads, and per-frame completions have explicit limits.
 10. Keep world coordinates signed 32-bit only within their current documented representable range. A 64-bit coordinate/floating-origin design is a separate prerequisite before expanding that range.
 
-Do not claim the disk cache is complete until the runtime uses this index-first, lazy-read, bounded-eviction flow and the persistence tests cover interrupted writes, failed reads/writes, eviction/reload, and manifest preservation. The current bounded cache and low-level write queue are groundwork; autosave still writes synchronously.
+Do not claim the disk cache is fully verified until persistence tests cover interrupted writes, failed reads/writes, stale generations, eviction/reload, and manifest preservation. The bounded asynchronous transaction is implemented in source but has not been compiled or tested.
 
 
 ## Chunk I/O queue status
