@@ -270,9 +270,6 @@ impl SaveStore {
         for coord in old {
             if terrain.is_chunk_loaded(coord) && !terrain.is_chunk_edited(coord) { records.remove(&coord); }
         }
-        if records.len().saturating_add(chunks.len()) > MAX_SAVED_CHUNKS {
-            return Err(format!("World exceeds the {MAX_SAVED_CHUNKS}-chunk save limit"));
-        }
         let chunk_directory = directory.join(CHUNK_DIRECTORY);
         let mut writes = VecDeque::with_capacity(chunks.len());
         let mut saved_coords = Vec::with_capacity(chunks.len());
@@ -284,6 +281,9 @@ impl SaveStore {
             records.insert(*coord, checksum);
             writes.push_back(PendingChunkWrite { coord: *coord, temp_path, final_path, bytes });
             saved_coords.push(*coord);
+        }
+        if records.len() > MAX_SAVED_CHUNKS {
+            return Err(format!("World contains {} edited chunks; save limit is {}", records.len(), MAX_SAVED_CHUNKS));
         }
         let manifest_bytes = encode_manifest_records(terrain, &records, inventory)?;
         let generation = self.next_generation;
