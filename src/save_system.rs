@@ -725,6 +725,7 @@ mod tests {
             catalog: HashMap::new(),
             loaded_records: HashSet::new(),
             failed_reads: HashSet::new(),
+            cache_deferred_reads: HashSet::new(),
             load_failed: false,
         };
         let loaded = store.load().unwrap().unwrap();
