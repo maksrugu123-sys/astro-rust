@@ -163,8 +163,9 @@ impl SaveStore {
             };
             match completion.result.and_then(|bytes| decode_chunk(&bytes, coord, expected_checksum)) {
                 Ok(edits) => {
-                    terrain.cache_saved_chunk_edits(coord, edits);
-                    store.loaded_records.insert(coord);
+                    if terrain.cache_saved_chunk_edits(coord, edits) {
+                        store.loaded_records.insert(coord);
+                    }
                 }
                 Err(error) => {
                     store.failed_reads.insert(coord);
