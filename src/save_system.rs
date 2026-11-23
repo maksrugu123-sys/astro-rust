@@ -313,6 +313,7 @@ pub fn load_saved_world(
             store.catalog.clear();
             store.loaded_records.clear();
             store.failed_reads.clear();
+            store.cache_deferred_reads.clear();
             store.load_failed = false;
             info!("No ASTRO-RUST save found; generating a new world");
         }
