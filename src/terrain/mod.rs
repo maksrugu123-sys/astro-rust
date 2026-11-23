@@ -391,20 +391,10 @@ impl TerrainWorld {
             && !self.edited_cache.contains_key(&coord)
             && self.edited_cache.len() >= MAX_CACHED_EDIT_CHUNKS
         {
-            // A previously committed cache entry can be dropped safely because
-            // its immutable disk record remains authoritative. Prefer a stable
-            // coordinate order so cache pressure is deterministic.
-            let evict = self.edited_cache.keys().copied()
-                .filter(|cached| self.persisted_chunks.contains(cached))
-                .min_by_key(|cached| (cached.x, cached.y, cached.z));
-            if let Some(evict) = evict {
-                self.edited_cache.remove(&evict);
-                self.disk_pending.insert(evict);
-            } else {
-                // Every cached entry contains unsaved edits. Do not overwrite
-                // any of them; the caller will retry after the next successful save.
-                return false;
-            }
+            // Do not evict a saved payload while a generation job might still
+            // be waiting to consume it. Streaming evicts only entries outside
+            // its protected neighborhood and pending generation set.
+            return false;
         }
         self.disk_pending.remove(&coord);
         self.cleared_edits.remove(&coord);
@@ -447,6 +437,37 @@ impl TerrainWorld {
 
     pub(crate) fn cached_edit_chunk_count(&self) -> usize {
         self.edited_cache.len()
+    }
+
+    pub(crate) fn has_edit_cache_capacity(&self) -> bool {
+        self.edited_cache.len() < MAX_CACHED_EDIT_CHUNKS
+    }
+
+    /// Frees slots only from durable cache entries outside the active and
+    /// pending-generation sets. Unsaved edits are never candidates.
+    fn evict_persisted_cache_outside(
+        &mut self,
+        protected: &HashSet<ChunkCoord>,
+        pending_generation: &HashSet<ChunkCoord>,
+    ) {
+        if self.has_edit_cache_capacity() {
+            return;
+        }
+        let mut candidates: Vec<_> = self.edited_cache.keys().copied()
+            .filter(|coord| {
+                self.persisted_chunks.contains(coord)
+                    && !protected.contains(coord)
+                    && !pending_generation.contains(coord)
+            })
+            .collect();
+        candidates.sort_by_key(|coord| (coord.x, coord.y, coord.z));
+        for coord in candidates {
+            if self.has_edit_cache_capacity() {
+                break;
+            }
+            self.edited_cache.remove(&coord);
+            self.disk_pending.insert(coord);
+        }
     }
 
     pub(crate) fn is_chunk_loaded(&self, coord: ChunkCoord) -> bool {
@@ -819,6 +840,8 @@ pub fn stream_terrain_chunks(
             }
         }
     }
+
+    terrain.evict_persisted_cache_outside(&desired, &generation.pending);
 
     let stale: Vec<(Entity, ChunkCoord)> = visuals
         .iter()
