@@ -1181,6 +1181,39 @@ mod tests {
     }
 
     #[test]
+    fn committed_unloaded_edits_are_evicted_and_blocked_for_disk_reload() {
+        let mut world = TerrainWorld::new(7, 0.25, 3.0);
+        let coord = ChunkCoord { x: 0, y: 0, z: 0 };
+        world.ensure_chunk(coord);
+        assert!(world.set_block(IVec3::new(4, 4, 4), VoxelKind::Air));
+        assert!(world.unload_chunk(coord));
+        assert!(world.has_cached_edits(coord));
+
+        world.mark_saved_chunk(coord);
+        assert!(!world.has_cached_edits(coord));
+        assert!(world.is_chunk_disk_pending(coord));
+        world.ensure_chunk(coord);
+        assert!(!world.contains_chunk(coord));
+    }
+
+    #[test]
+    fn cache_budget_keeps_unsaved_edited_chunk_resident() {
+        let mut world = TerrainWorld::new(7, 0.25, 3.0);
+        for index in 0..MAX_CACHED_EDIT_CHUNKS {
+            world.edited_cache.insert(
+                ChunkCoord { x: index as i32 + 100, y: 0, z: 0 },
+                vec![(0, VoxelKind::Rock)],
+            );
+        }
+        let coord = ChunkCoord { x: 0, y: 0, z: 0 };
+        world.ensure_chunk(coord);
+        assert!(world.set_block(IVec3::new(4, 4, 4), VoxelKind::Air));
+        assert!(!world.unload_chunk(coord));
+        assert!(world.contains_chunk(coord));
+        assert_eq!(world.cached_edit_chunk_count(), MAX_CACHED_EDIT_CHUNKS);
+    }
+
+    #[test]
     fn digging_removes_voxels_and_marks_chunk_edited() {
         let mut world = TerrainWorld::new(7, 0.25, 3.0);
         let removed = world.dig_sphere(Vec3::new(0.0, 2.8, 0.0), 0.65);
