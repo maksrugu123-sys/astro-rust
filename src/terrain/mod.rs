@@ -916,7 +916,7 @@ pub fn stream_terrain_chunks(
             requested += 1;
             continue;
         }
-        if save_store.request_saved_chunk(coord, &mut chunk_io)
+        if save_store.request_saved_chunk(coord, &mut chunk_io, &terrain)
             || terrain.is_chunk_disk_pending(coord)
         {
             continue;
