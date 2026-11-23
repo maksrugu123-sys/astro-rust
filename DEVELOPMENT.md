@@ -53,7 +53,7 @@
 - [x] Deterministic copper and iron ore veins in underground rock (source implemented; runtime distribution pending).
 - [x] Oxygen, energy and health survival meters with habitat/solar proximity effects (source implemented; balancing and device verification pending).
 - [x] Basic material inventory with mining collection and on-screen counts (source implemented; UI verification pending).
-- [x] Persist inventory counts and sparse terrain deltas in the current v4 save format; older save formats are intentionally unsupported.
+- [x] Persist inventory counts and sparse terrain deltas in the current v5 save format; older save formats are intentionally unsupported.
 - [x] Oxygen-canister recipe and use action; existing material stacks remain capped at 99 (source implemented; runtime verification pending).
 - [x] Deployable habitat and solar-array structures with proximity effects (source implemented; persistence and runtime verification pending).
 
@@ -66,7 +66,7 @@
 
 ## Current validation status
 
-The latest gameplay batch adds `src/gameplay.rs` and registers it in the Bevy app. It includes seeded biome classification, oxygen/energy/health simulation, four touch action buttons, oxygen-canister crafting/use, and deployable habitat/solar structures. This is not yet a verified playable release: no compilation, tests, APK packaging, CI, or phone profiling has been run. Survival values, canisters, structures, and biome state are not yet persisted; the current save system persists terrain edits and the four raw-material inventory slots only.
+The latest gameplay batch adds `src/gameplay.rs` and registers it in the Bevy app. It includes seeded biome classification, oxygen/energy/health simulation, four touch action buttons, oxygen-canister crafting/use, and deployable habitat/solar structures. A separate checksummed gameplay.dat sidecar now persists survival meters, oxygen canisters, elapsed play time, biome and deployed structure types/positions; it autosaves every 10 seconds and also saves on suspend/exit. This is source-level implementation only: no compilation, tests, APK packaging, CI, or phone profiling has been run. The gameplay sidecar and v5 terrain save are not yet proven to coexist correctly on device.
 
 
 No builds, tests, APK packaging, or device profiling have been run. Terrain, greedy-meshing, worker-generation, inventory, sparse-save, and old-version rejection tests are present but have not been executed. Chunk mesh generation, terrain-aware player contact, voxel ray queries, mining, block placement, bounded asynchronous chunk generation, ore collection, inventory persistence, and world save/load are implemented in source but remain uncompiled and unverified. Android packaging is not implemented.
@@ -207,3 +207,14 @@ No builds, tests, APK packaging, or device profiling have been run. Terrain, gre
 The bounded `ChunkIoQueue` now accepts immutable chunk-file write jobs as well as reads. It uses the same two workers and bounded request/completion channels. A write creates the parent directory, writes to a temporary path, flushes the file with `sync_all`, and renames it to its immutable final path. Completion is reported only after the rename succeeds. Queue saturation and duplicate in-flight writes are rejected without blocking the game thread; callers must retain dirty data and retry.
 
 `SaveStore` now drives generation-tagged asynchronous save transactions through this queue. It limits submissions to four chunk writes per frame, tracks in-flight coordinates, aborts stale terrain/inventory snapshots, and commits the manifest only after all writes in that generation succeed. The manifest replacement itself remains a small synchronous atomic operation. Suspend/exit enqueue work but cannot guarantee completion if the operating system terminates the process immediately. Tests and compilation have not been run.
+
+
+## Latest gameplay persistence batch — survival and base equipment
+
+- Added a separate versioned ASTROGP1 gameplay sidecar at astro-rust/gameplay.dat in app-private Android storage (desktop development uses saves/gameplay.dat).
+- Persists oxygen, energy, health, carried oxygen canisters, biome identifier, elapsed play time, and deployed habitat/solar-array type and world position.
+- Restores saved structures into the scene and rebuilds habitat/solar counts from the restored structure list.
+- Writes a checksummed snapshot every 10 seconds, and attempts an additional write on WillSuspend and AppExit.
+- Uses bounded input size, a 40-structure cap, finite/range checks, a checksum, a temporary file and atomic rename. A corrupt existing gameplay save is rejected and is not overwritten automatically.
+- Added codec round-trip, corruption/bounds, and invalid-survival-value unit tests.
+- Important limitation: this is source-only and has not been compiled, tested, packaged or run on Android. The synchronous sidecar write is small and bounded, but Android lifecycle durability and atomic replacement behavior still need device verification.

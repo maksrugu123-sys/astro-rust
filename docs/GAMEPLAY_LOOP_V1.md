@@ -37,11 +37,15 @@ Create a compact but connected first-playable loop for Android: explore a spheri
 - New top-right action row: CRAFT O2, USE O2, HABITAT, SOLAR.
 - Desktop keyboard terrain controls remain E (mine), Q (place), WASD (move), Space (jump).
 
+## Persistence now present in source
+
+A separate checksummed gameplay sidecar stores oxygen, energy, health, oxygen canisters, elapsed time, current biome, and the type/position of each deployed habitat or solar array. It attempts autosave every 10 seconds and additional saves on app suspend/exit. The file is bounded to 40 structures and validated on load. The sidecar is separate from the terrain/inventory manifest. This is not yet device-verified.
+
 ## Known gaps before calling this a first playable build
 
 1. Compile the project and repair any Bevy API or Rust errors.
 2. Run unit tests and add integration tests for survival and crafting transitions.
-3. Persist survival meters, canisters, and deployed structures in a new versioned save format.
+3. Verify the new versioned gameplay sidecar and terrain/inventory save coexist, survive process termination, and recover safely from interrupted writes.
 4. Make biome classification affect terrain materials, vegetation and resource distribution.
 5. Add tool energy costs and meaningful energy use.
 6. Add a real inventory screen, item stacks, recipes and equipment upgrades.

@@ -25,9 +25,9 @@ The current development branch contains source implementations for:
 - oxygen-canister crafting and use;
 - deployable habitats that replenish oxygen nearby;
 - solar arrays that recharge suit energy nearby;
-- versioned, checksummed sparse terrain and material-inventory persistence.
+- versioned, checksummed sparse terrain and material-inventory persistence; a separate checksummed gameplay sidecar now saves survival meters, oxygen canisters, elapsed time, biome and deployed equipment positions.
 
-The gameplay additions are source-level work only. They have **not** yet been compiled, tested, packaged as an APK, or verified on a phone. Survival meters, crafted canisters, deployed structures and biome discovery are not yet included in the save format.
+The gameplay additions are source-level work only. They have **not** yet been compiled, tested, packaged as an APK, or verified on a phone. The gameplay sidecar is implemented in source but has not been verified by a build or device run.
 
 ## Repository map
 
