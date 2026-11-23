@@ -27,7 +27,7 @@ The current development branch contains source implementations for:
 - solar arrays that recharge suit energy nearby;
 - versioned, checksummed sparse terrain and material-inventory persistence; a separate checksummed gameplay sidecar now saves survival meters, oxygen canisters, elapsed time, biome and deployed equipment positions.
 
-Terrain tools now consume suit energy (mining 0.35, placement 0.20) and block placement consumes one regolith. The gameplay additions are source-level work only. They have **not** yet been compiled, tested, packaged as an APK, or verified on a phone. The gameplay sidecar is implemented in source but has not been verified by a build or device run.
+Terrain tools now consume suit energy (mining 0.35, placement 0.20) and block placement consumes one regolith. The repository now has a root `Cargo.toml` for the Bevy 0.19 crate and a `.gitignore` for Rust/Android build artifacts. This restores the missing Rust package metadata, but it is not yet a complete Android app: Gradle/manifest/launcher scaffolding is still absent. The code has **not** yet been compiled, tested, packaged as an APK, or verified on a phone.
 
 ## Repository map
 
@@ -44,4 +44,4 @@ See [DEVELOPMENT.md](DEVELOPMENT.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.m
 
 ## Validation
 
-No build, unit-test run, APK packaging, CI run, or Android device profiling has been performed for the latest gameplay batch. Do not treat source implementation as a verified playable release.
+No build, unit-test run, APK packaging, CI run, or Android device profiling has been performed. `Cargo.toml` now targets Bevy 0.19 based on the source APIs; dependency resolution and compilation are still unverified. Do not treat source implementation as a verified playable release.
