@@ -700,7 +700,7 @@ fn persist_gameplay_snapshot(
     if store.last_bytes.as_ref() == Some(&bytes) {
         return;
     }
-    let Some(path) = store.path.as_ref() else {
+    let Some(path) = store.path.clone() else {
         warn!("Gameplay save path is unavailable");
         return;
     };
