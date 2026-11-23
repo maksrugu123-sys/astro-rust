@@ -228,3 +228,16 @@ The bounded `ChunkIoQueue` now accepts immutable chunk-file write jobs as well a
 - Added a root `.gitignore` for Cargo output, generated Android build directories, local SDK settings, and local save data.
 - **Not yet complete:** no Android Gradle project, launcher Activity, manifest, resources, or Gradle wrapper are present. The manifest restores Cargo package metadata but does not by itself produce an installable APK.
 - **Validation:** no `cargo check`, `cargo test`, NDK build, Gradle build, APK, or phone test was run in this batch. Bevy dependency resolution and the Android lifecycle APIs still require compilation verification.
+
+
+## Android GameActivity integration scaffold
+
+- Added an Android Gradle project under `android/` based on the Bevy 0.19 GameActivity sample structure.
+- Added the Android launcher Activity and manifest. The Activity loads the Rust shared library as `astro_rust`, matching the root library crate name.
+- Android app identity is `net.astrorust.game`; the module currently targets compile/target API 34, minimum API 31, and the `arm64-v8a` ABI.
+- Added `scripts/build-android.sh`: it builds the Rust library with `cargo-ndk` and then runs Gradle `assembleDebug`.
+- Added `.github/workflows/android-apk.yml`, which is `workflow_dispatch` only. It does not consume CI minutes automatically on each push.
+- Added `docs/ANDROID_BUILD.md` with prerequisites, commands, expected APK path, and known limitations.
+- Gradle 8.6 / AGP 8.4 / JDK 17 and Android GameActivity dependency versions follow the Bevy 0.19 mobile example. Bevy's official 0.19 setup uses `cargo-ndk` to place the shared library in `jniLibs` before invoking Gradle.
+- **Known gap:** Gradle wrapper scripts and the wrapper JAR are not committed; use an installed Gradle 8.6 executable for now.
+- **Validation:** no Rust compile, NDK link, Gradle build, APK generation, CI workflow, or physical-device test has been run. This is an integration scaffold, not a confirmed working APK.
