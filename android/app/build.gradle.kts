@@ -10,7 +10,7 @@ java {
 
 android {
     namespace = "net.astrorust.game"
-    compileSdk = 37
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "net.astrorust.game"
