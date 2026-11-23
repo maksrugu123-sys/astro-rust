@@ -945,7 +945,7 @@ pub fn refresh_dirty_chunk_meshes(
 
     for (coord, handle) in dirty {
         let rebuilt = build_chunk_mesh(&terrain, coord);
-        if let Some(mesh) = meshes.get_mut(&handle) {
+        if let Some(mut mesh) = meshes.get_mut(&handle) {
             *mesh = rebuilt;
         }
         if let Some(chunk) = terrain.chunks.get_mut(&coord) {
