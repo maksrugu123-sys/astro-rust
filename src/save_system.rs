@@ -37,6 +37,7 @@ pub struct SaveStore {
     catalog: HashMap<ChunkCoord, u64>,
     loaded_records: HashSet<ChunkCoord>,
     failed_reads: HashSet<ChunkCoord>,
+    cache_deferred_reads: HashSet<ChunkCoord>,
     load_failed: bool,
 }
 
@@ -66,6 +67,7 @@ impl SaveStore {
             catalog: HashMap::new(),
             loaded_records: HashSet::new(),
             failed_reads: HashSet::new(),
+            cache_deferred_reads: HashSet::new(),
             load_failed: false,
         }
     }
@@ -125,12 +127,19 @@ impl SaveStore {
         &mut self,
         coord: ChunkCoord,
         io: &mut ChunkIoQueue,
+        terrain: &TerrainWorld,
     ) -> bool {
         let Some(checksum) = self.catalog.get(&coord).copied() else {
             return false;
         };
         if self.loaded_records.contains(&coord) {
             return false;
+        }
+        if self.cache_deferred_reads.contains(&coord) {
+            if !terrain.has_edit_cache_capacity() {
+                return true;
+            }
+            self.cache_deferred_reads.remove(&coord);
         }
         if self.failed_reads.contains(&coord) {
             return true;
@@ -166,10 +175,11 @@ impl SaveStore {
                     if terrain.cache_saved_chunk_edits(coord, edits) {
                         store.loaded_records.insert(coord);
                         store.failed_reads.remove(&coord);
+                        store.cache_deferred_reads.remove(&coord);
                     } else {
                         // Cache pressure is temporary; hold this saved coordinate
-                        // blocked until a successful save frees or evicts a slot.
-                        store.failed_reads.insert(coord);
+                        // blocked until streaming safely evicts an inactive durable entry.
+                        store.cache_deferred_reads.insert(coord);
                     }
                 }
                 Err(error) => {
@@ -242,6 +252,7 @@ impl SaveStore {
                 terrain.clear_saved_chunk(*coord);
                 self.loaded_records.remove(coord);
                 self.failed_reads.remove(coord);
+                self.cache_deferred_reads.remove(coord);
             }
         }
         for (coord, _) in &chunks {
@@ -290,6 +301,7 @@ pub fn load_saved_world(
             store.catalog = save.chunk_records;
             store.loaded_records.clear();
             store.failed_reads.clear();
+            store.cache_deferred_reads.clear();
             store.load_failed = false;
             inventory.regolith = save.inventory[0].min(99);
             inventory.rock = save.inventory[1].min(99);
@@ -744,6 +756,7 @@ mod tests {
             catalog: records.clone(),
             loaded_records: HashSet::new(),
             failed_reads: HashSet::new(),
+            cache_deferred_reads: HashSet::new(),
             load_failed: false,
         };
 
