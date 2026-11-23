@@ -65,7 +65,7 @@ Do not claim the disk cache is complete until the runtime uses this index-first,
 
 ## Chunk I/O queue status
 
-- `src/chunk_io.rs` is connected to manifest-indexed terrain streaming for asynchronous saved-chunk reads and bounded immutable writes; the write path is not yet connected to autosave transactions.
+- `src/chunk_io.rs` is connected to manifest-indexed reads and generation-safe SaveStore transactions. Keep chunk writes immutable and bounded; do not commit a manifest until every write in its transaction has completed successfully.
 - Do not expose a generated baseline chunk before any referenced disk edit record has been loaded and validated.
 - Keep checksum/version/coordinate validation in the save subsystem; the I/O worker returns raw bytes only.
 - Untouched manifest references must be preserved during incremental saves.
