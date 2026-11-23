@@ -1,24 +1,10 @@
 use bevy::{prelude::*, winit::WinitSettings};
 
 mod chunk_io;
-mod debug_log;
 mod planet;
 mod player;
 mod save_system;
 mod terrain;
-
-#[cfg(target_os = "android")]
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_net_astrorust_game_MainActivity_nativeSetDebugDirectory(
-    mut env: jni::JNIEnv,
-    _activity: jni::objects::JObject,
-    path: jni::objects::JString,
-) {
-    if let Ok(path) = env.get_string(&path) {
-        let path: String = path.into();
-        debug_log::set_directory(std::path::PathBuf::from(path));
-    }
-}
 
 #[bevy_main]
 pub fn main() {
@@ -26,9 +12,6 @@ pub fn main() {
 }
 
 pub fn run_app() {
-    debug_log::initialize();
-    info!("ASTRO-RUST startup: initializing Bevy application");
-
     let mut app = App::new();
 
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
@@ -79,6 +62,5 @@ pub fn run_app() {
     )
     .add_systems(Last, save_system::save_world_on_exit);
 
-    info!("ASTRO-RUST startup: Bevy plugins and systems registered");
     app.run();
 }
