@@ -263,6 +263,7 @@ impl SaveStore {
                 self.loaded_records.remove(coord);
             }
             self.failed_reads.remove(coord);
+            self.cache_deferred_reads.remove(coord);
         }
         if let Ok(entries) = fs::read_dir(&chunk_directory) {
             for entry in entries.flatten() {
