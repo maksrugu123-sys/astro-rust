@@ -218,3 +218,13 @@ The bounded `ChunkIoQueue` now accepts immutable chunk-file write jobs as well a
 - Uses bounded input size, a 40-structure cap, finite/range checks, a checksum, a temporary file and atomic rename. A corrupt existing gameplay save is rejected and is not overwritten automatically.
 - Added codec round-trip, corruption/bounds, and invalid-survival-value unit tests.
 - Important limitation: this is source-only and has not been compiled, tested, packaged or run on Android. The synchronous sidecar write is small and bounded, but Android lifecycle durability and atomic replacement behavior still need device verification.
+
+
+## Build-system foundation — Bevy 0.19
+
+- Added the missing root `Cargo.toml`: package/library name `astro-rust` / `astro_rust`, Rust 2024 edition, and `rlib + cdylib` outputs so the desktop binary and Android native library can share `lib.rs`.
+- Pinned the Bevy dependency to the 0.19 release line. The source already uses the 0.19 `FontSize::Px` API.
+- Enabled Bevy's `android-game-activity` feature explicitly. Bevy 0.19 removed GameActivity from its default feature set, so Android must opt in.
+- Added a root `.gitignore` for Cargo output, generated Android build directories, local SDK settings, and local save data.
+- **Not yet complete:** no Android Gradle project, launcher Activity, manifest, resources, or Gradle wrapper are present. The manifest restores Cargo package metadata but does not by itself produce an installable APK.
+- **Validation:** no `cargo check`, `cargo test`, NDK build, Gradle build, APK, or phone test was run in this batch. Bevy dependency resolution and the Android lifecycle APIs still require compilation verification.
