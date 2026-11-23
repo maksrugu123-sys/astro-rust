@@ -1,0 +1,33 @@
+[package]
+name = "astro-rust"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "MIT"
+
+[lib]
+name = "astro_rust"
+path = "lib.rs"
+crate-type = ["rlib", "cdylib"]
+
+[[bin]]
+name = "astro-rust"
+path = "main.rs"
+
+[dependencies]
+# FontSize::Px and the current UI APIs in the source target Bevy 0.19.
+# GameActivity is explicitly enabled because Bevy 0.19 no longer enables it
+# through the default feature set.
+bevy = { version = "0.19", features = ["android-game-activity"] }
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
