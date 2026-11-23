@@ -27,16 +27,16 @@ const MAX_PHYSICS_STEP: f32 = 0.05;
 pub(crate) struct PlanetPlayer;
 
 #[derive(Component)]
-struct PlayerHeading(Vec3);
+pub(crate) struct PlayerHeading(Vec3);
 
 #[derive(Component)]
-struct PlayerMotion {
+pub(crate) struct PlayerMotion {
     velocity: Vec3,
     grounded: bool,
 }
 
 #[derive(Component)]
-struct JoystickThumb;
+pub(crate) struct JoystickThumb;
 
 /// Basic carried materials collected by mining solid resource blocks.
 #[derive(Resource, Default)]
@@ -74,10 +74,8 @@ impl Inventory {
     }
 }
 
-
 #[derive(Component)]
-struct InventoryHud;
-
+pub(crate) struct InventoryHud;
 
 /// Normalized movement input, camera drag, and held jump state from touch.
 #[derive(Resource, Default)]
@@ -535,7 +533,6 @@ pub fn apply_terrain_actions(
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {
