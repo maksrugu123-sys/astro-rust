@@ -1257,6 +1257,42 @@ mod tests {
     }
 
     #[test]
+    fn cache_read_never_overwrites_unsaved_edits_when_full() {
+        let mut world = TerrainWorld::new(7, 0.25, 3.0);
+        for index in 0..MAX_CACHED_EDIT_CHUNKS {
+            world.edited_cache.insert(
+                ChunkCoord { x: index as i32 + 100, y: 0, z: 0 },
+                vec![(0, VoxelKind::Rock)],
+            );
+        }
+        let incoming = ChunkCoord { x: -50, y: 0, z: 0 };
+        world.disk_pending.insert(incoming);
+        assert!(!world.cache_saved_chunk_edits(incoming, vec![(1, VoxelKind::Air)]));
+        assert!(world.disk_pending.contains(&incoming));
+        assert!(!world.has_cached_edits(incoming));
+        assert_eq!(world.cached_edit_chunk_count(), MAX_CACHED_EDIT_CHUNKS);
+    }
+
+    #[test]
+    fn durable_cache_eviction_skips_active_and_pending_generation_chunks() {
+        let mut world = TerrainWorld::new(7, 0.25, 3.0);
+        let coords: Vec<_> = (0..MAX_CACHED_EDIT_CHUNKS)
+            .map(|index| ChunkCoord { x: index as i32, y: 10, z: 0 })
+            .collect();
+        for coord in &coords {
+            world.edited_cache.insert(*coord, vec![(0, VoxelKind::Rock)]);
+            world.persisted_chunks.insert(*coord);
+        }
+        let protected = HashSet::from([coords[0]]);
+        let pending = HashSet::from([coords[1]]);
+        world.evict_persisted_cache_outside(&protected, &pending);
+        assert!(world.has_cached_edits(coords[0]));
+        assert!(world.has_cached_edits(coords[1]));
+        assert!(world.is_chunk_disk_pending(coords[2]));
+        assert!(world.has_edit_cache_capacity());
+    }
+
+    #[test]
     fn digging_removes_voxels_and_marks_chunk_edited() {
         let mut world = TerrainWorld::new(7, 0.25, 3.0);
         let removed = world.dig_sphere(Vec3::new(0.0, 2.8, 0.0), 0.65);
