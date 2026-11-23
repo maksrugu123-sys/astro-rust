@@ -391,9 +391,20 @@ impl TerrainWorld {
             && !self.edited_cache.contains_key(&coord)
             && self.edited_cache.len() >= MAX_CACHED_EDIT_CHUNKS
         {
-            // Keep the coordinate disk-pending; the streaming system can retry
-            // after a successful save releases cached edit entries.
-            return false;
+            // A previously committed cache entry can be dropped safely because
+            // its immutable disk record remains authoritative. Prefer a stable
+            // coordinate order so cache pressure is deterministic.
+            let evict = self.edited_cache.keys().copied()
+                .filter(|cached| self.persisted_chunks.contains(cached))
+                .min_by_key(|cached| (cached.x, cached.y, cached.z));
+            if let Some(evict) = evict {
+                self.edited_cache.remove(&evict);
+                self.disk_pending.insert(evict);
+            } else {
+                // Every cached entry contains unsaved edits. Do not overwrite
+                // any of them; the caller will retry after the next successful save.
+                return false;
+            }
         }
         self.disk_pending.remove(&coord);
         self.cleared_edits.remove(&coord);
