@@ -27,7 +27,7 @@ The current development branch contains source implementations for:
 - solar arrays that recharge suit energy nearby;
 - versioned, checksummed sparse terrain and material-inventory persistence; a separate checksummed gameplay sidecar now saves survival meters, oxygen canisters, elapsed time, biome and deployed equipment positions.
 
-Terrain tools now consume suit energy (mining 0.35, placement 0.20) and block placement consumes one regolith. The repository now has a root `Cargo.toml` for the Bevy 0.19 crate and a `.gitignore` for Rust/Android build artifacts. This restores the missing Rust package metadata, but it is not yet a complete Android app: Gradle/manifest/launcher scaffolding is still absent. The code has **not** yet been compiled, tested, packaged as an APK, or verified on a phone.
+Terrain tools now consume suit energy (mining 0.35, placement 0.20) and block placement consumes one regolith. The repository now includes a first Android GameActivity shell (Gradle app module, launcher manifest/activity, and ARM64 native-library loading), a Rust-to-Android build script, and a manually triggered APK workflow. The Android integration is source-only: it has **not** yet been compiled, packaged as an APK, or verified on a phone.
 
 ## Repository map
 
@@ -40,8 +40,8 @@ Terrain tools now consume suit energy (mining 0.35, placement 0.20) and block pl
 | `save_system.rs` | Sparse world and inventory persistence |
 | `chunk_io.rs` | Bounded asynchronous chunk file I/O |
 
-See [DEVELOPMENT.md](DEVELOPMENT.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), and [docs/GAMEPLAY_LOOP_V1.md](docs/GAMEPLAY_LOOP_V1.md).
+See [DEVELOPMENT.md](DEVELOPMENT.md), [Android build instructions](docs/ANDROID_BUILD.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), and [docs/GAMEPLAY_LOOP_V1.md](docs/GAMEPLAY_LOOP_V1.md).
 
 ## Validation
 
-No build, unit-test run, APK packaging, CI run, or Android device profiling has been performed. `Cargo.toml` now targets Bevy 0.19 based on the source APIs; dependency resolution and compilation are still unverified. Do not treat source implementation as a verified playable release.
+No Rust or Android build, unit-test run, APK packaging, CI run, or device profiling has been performed. The Android project targets Bevy 0.19 GameActivity, Android API 31+, and arm64-v8a. Dependency resolution, native linking, and packaging remain unverified. The APK workflow is manual-only and has not been started. Do not treat this branch as a verified playable release.
