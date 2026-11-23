@@ -10,7 +10,6 @@ use crate::{
 };
 use math::{radial_gravity, resolve_spherical_contact, tangent_frame};
 
-const PLANET_RADIUS: f32 = 3.0;
 const PLAYER_SURFACE_OFFSET: f32 = 0.62;
 const MOVE_ACCELERATION: f32 = 18.0;
 const MAX_GROUND_SPEED: f32 = 3.0;
@@ -20,7 +19,7 @@ const GRAVITY_STRENGTH: f32 = 9.8;
 const JUMP_SPEED: f32 = 5.2;
 const JOYSTICK_RADIUS: f32 = 58.0;
 const LOOK_SENSITIVITY: f32 = 0.005;
-const CAMERA_DISTANCE: f32 = 5.4;
+const CAMERA_DISTANCE: f32 = 8.5;
 const MAX_PHYSICS_STEP: f32 = 0.05;
 
 #[derive(Component)]
@@ -112,7 +111,7 @@ pub fn spawn_player(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let ground_radius = terrain.surface_radius(Vec3::Y).unwrap_or(PLANET_RADIUS);
+    let ground_radius = terrain.surface_radius(Vec3::Y).unwrap_or(terrain.base_radius);
     let start_position = Vec3::Y * (ground_radius + PLAYER_SURFACE_OFFSET);
 
     commands.spawn((
