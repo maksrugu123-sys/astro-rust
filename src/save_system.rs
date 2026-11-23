@@ -743,6 +743,8 @@ mod tests {
             failed_reads: HashSet::new(),
             cache_deferred_reads: HashSet::new(),
             load_failed: false,
+            pending_save: None,
+            next_generation: 1,
         };
         let loaded = store.load().unwrap().unwrap();
         assert_eq!(loaded.chunk_records, records);
@@ -775,9 +777,14 @@ mod tests {
             failed_reads: HashSet::new(),
             cache_deferred_reads: HashSet::new(),
             load_failed: false,
+            pending_save: None,
+            next_generation: 1,
         };
 
-        store.save(&mut world, &Inventory::default()).unwrap();
+        store.begin_save(&world, &Inventory::default()).unwrap();
+        let transaction = store.pending_save.take().unwrap();
+        assert!(transaction.writes.is_empty());
+        fs::write(root.join(MANIFEST_FILE), transaction.manifest_bytes).unwrap();
         let manifest = fs::read(root.join(MANIFEST_FILE)).unwrap();
         let decoded = decode_manifest(&manifest).unwrap();
         assert_eq!(decoded.chunk_records, vec![(coord, records[&coord])]);
