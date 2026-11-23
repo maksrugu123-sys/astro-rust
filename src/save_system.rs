@@ -117,6 +117,10 @@ impl SaveStore {
         }))
     }
 
+    pub(crate) fn forget_loaded_chunk(&mut self, coord: ChunkCoord) {
+        self.loaded_records.remove(&coord);
+    }
+
     pub(crate) fn request_saved_chunk(
         &mut self,
         coord: ChunkCoord,
@@ -170,7 +174,7 @@ impl SaveStore {
         }
     }
 
-    fn save(&mut self, terrain: &TerrainWorld, inventory: &Inventory) -> Result<(), String> {
+    fn save(&mut self, terrain: &mut TerrainWorld, inventory: &Inventory) -> Result<(), String> {
         if self.load_failed {
             return Err("An existing world save could not be validated; refusing to overwrite it".into());
         }
@@ -178,6 +182,7 @@ impl SaveStore {
             return Err("No writable application data directory is available".into());
         };
         let chunks = terrain.export_edited_chunks();
+        let previous_catalog = self.catalog.clone();
         let mut records = self.catalog.clone();
 
         // If a catalogued chunk is resident and no longer edited, its old disk
@@ -220,10 +225,24 @@ impl SaveStore {
             .map(|(coord, checksum)| Self::chunk_filename(*coord, *checksum))
             .collect();
         self.catalog = records.clone();
-        self.loaded_records.retain(|coord| self.catalog.contains_key(coord));
+        self.loaded_records.retain(|coord| {
+            self.catalog.contains_key(coord) && terrain.is_chunk_loaded(*coord)
+        });
         self.failed_reads.retain(|coord| self.catalog.contains_key(coord));
+        for coord in previous_catalog.keys() {
+            if !self.catalog.contains_key(coord) {
+                terrain.clear_saved_chunk(*coord);
+                self.loaded_records.remove(coord);
+                self.failed_reads.remove(coord);
+            }
+        }
         for (coord, _) in &chunks {
-            self.loaded_records.insert(*coord);
+            terrain.mark_saved_chunk(*coord);
+            if terrain.is_chunk_loaded(*coord) {
+                self.loaded_records.insert(*coord);
+            } else {
+                self.loaded_records.remove(coord);
+            }
             self.failed_reads.remove(coord);
         }
         if let Ok(entries) = fs::read_dir(&chunk_directory) {
@@ -286,7 +305,7 @@ pub fn load_saved_world(
 
 pub fn autosave_world(
     time: Res<Time>,
-    terrain: Res<TerrainWorld>,
+    mut terrain: ResMut<TerrainWorld>,
     inventory: Res<Inventory>,
     mut store: ResMut<SaveStore>,
 ) {
@@ -298,7 +317,7 @@ pub fn autosave_world(
     if !store.timer.just_finished() || world_is_current {
         return;
     }
-    match store.save(&terrain, &inventory) {
+    match store.save(&mut terrain, &inventory) {
         Ok(()) => {
             store.last_saved_revision = Some(revision);
             store.last_saved_inventory = Some(inventory_snapshot);
@@ -311,7 +330,7 @@ pub fn autosave_world(
 /// Save on the last active frame before Android/iOS backgrounds the app.
 pub fn save_world_on_suspend(
     mut lifecycle: MessageReader<bevy::window::AppLifecycle>,
-    terrain: Res<TerrainWorld>,
+    mut terrain: ResMut<TerrainWorld>,
     inventory: Res<Inventory>,
     mut store: ResMut<SaveStore>,
 ) {
@@ -337,7 +356,7 @@ pub fn save_world_on_suspend(
 
 pub fn save_world_on_exit(
     mut exits: MessageReader<AppExit>,
-    terrain: Res<TerrainWorld>,
+    mut terrain: ResMut<TerrainWorld>,
     inventory: Res<Inventory>,
     mut store: ResMut<SaveStore>,
 ) {
@@ -706,7 +725,7 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
 
-        let world = TerrainWorld::new(321, 0.25, 3.0);
+        let mut world = TerrainWorld::new(321, 0.25, 3.0);
         let coord = ChunkCoord { x: -7, y: 2, z: 5 };
         let records = HashMap::from([(coord, 0xCAFE_BABE_u64)]);
         let mut store = SaveStore {
@@ -720,7 +739,7 @@ mod tests {
             load_failed: false,
         };
 
-        store.save(&world, &Inventory::default()).unwrap();
+        store.save(&mut world, &Inventory::default()).unwrap();
         let manifest = fs::read(root.join(MANIFEST_FILE)).unwrap();
         let decoded = decode_manifest(&manifest).unwrap();
         assert_eq!(decoded.chunk_records, vec![(coord, records[&coord])]);
