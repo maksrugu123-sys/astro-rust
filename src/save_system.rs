@@ -170,7 +170,7 @@ impl SaveStore {
     }
 
     /// Processes bounded I/O completions and advances the active save transaction.
-    pub fn process_chunk_io(mut io: ResMut<ChunkIoQueue>, mut store: ResMut<SaveStore>, mut terrain: ResMut<TerrainWorld>) {
+    pub fn process_chunk_io(mut io: ResMut<ChunkIoQueue>, mut store: ResMut<SaveStore>, mut terrain: ResMut<TerrainWorld>, inventory: Res<Inventory>) {
         for completion in io.collect_completed(8) {
             let coord = completion.coord;
             match completion.operation {
@@ -202,7 +202,7 @@ impl SaveStore {
 
         // A changed world invalidates the captured snapshot. Its content-addressed
         // chunk files are harmless orphans; the old manifest remains authoritative.
-        if store.pending_save.as_ref().is_some_and(|tx| tx.revision != terrain.edit_revision()) {
+        if store.pending_save.as_ref().is_some_and(|tx| tx.revision != terrain.edit_revision() || tx.inventory != inventory.snapshot()) {
             store.pending_save = None;
         }
 
