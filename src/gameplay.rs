@@ -141,7 +141,7 @@ pub fn setup_gameplay_ui(mut commands: Commands) {
             Node {
                 position_type: PositionType::Absolute,
                 right: Val::Px(16.0 + (buttons_index(label) as f32) * 116.0),
-                bottom: Val::Px(18.0),
+                top: Val::Px(196.0),
                 width: Val::Px(104.0),
                 height: Val::Px(48.0),
                 justify_content: JustifyContent::Center,
